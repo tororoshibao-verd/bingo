@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>マイカード｜Bonbon Bingo</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 数字のルール、保存と変更通知、参加者用の表示の順に読み込む。各JSの中身は実装手順のコメント。 -->
+  <script defer src="js/game.js"></script>
+  <script defer src="js/storage.js"></script>
+  <script defer src="js/card.js"></script>
+</head>
+<!-- デザイン確認用。下の data-card-state だけを変更して保存し、ブラウザを再読み込みする。
+     playing＝進行中、register＝初回登録、ended＝終了、closed＝受付締切、reset＝旧カード、error＝読込エラー。
+     以下のID・名前・番号・マスはすべて第12回の静的な見本。実装時はURLと保存データから状態を選ぶ。 -->
+<body class="card-page" data-card-state="playing">
+  <!-- .card-shell は参加者の画面全体。PCではこの列を中央に保ち、左右に包装紙を表示する。 -->
+  <div class="card-shell">
+    <!-- 自分がどの状態のカードを見ているかを表示。card.js は body の状態を切り替え、該当するバッジを見せる。 -->
+    <header class="site-header">
+      <div class="header-inner">
+        <img class="brand-logo" src="images/logo.svg" alt="Bonbon Bingo" width="157" height="34">
+        <div class="card-state-badges">
+          <span class="badge card-badge state-playing">ゲーム中</span>
+          <span class="badge card-badge state-register">受付中</span>
+          <span class="badge card-badge state-ended">終了</span>
+          <span class="badge card-badge state-closed">受付終了</span>
+          <span class="badge card-badge state-reset">リセット済み</span>
+          <span class="badge card-badge state-error">エラー</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="card-main">
+      <!-- 登録済みカードの表示。#card-play はゲーム中と終了後に共用し、終了後も最後の盤面を確認できる。 -->
+      <div id="card-play" class="card-view">
+        <!-- 最新の確定番号を示す。JSは保存された履歴の末尾から #card-letter・#card-number・#card-round を更新する。 -->
+        <section class="latest-card-ball" aria-labelledby="latest-heading">
+          <div>
+            <h2 id="latest-heading">最新の番号</h2>
+            <p id="card-round">第12回の抽選</p>
+          </div>
+          <div class="latest-value" aria-live="polite" aria-atomic="true">
+            <span id="card-letter" class="number">N</span>
+            <strong id="card-number" class="number">42</strong>
+          </div>
+        </section>
+
+        <!-- 自分のカード。登録済みの識別子と名前を #card-id と #card-name に書き戻す。長いIDも最後まで表示する。 -->
+        <section class="player-ticket" aria-labelledby="card-title">
+          <header class="ticket-owner">
+            <div>
+              <p id="card-id" class="card-serial">CARD-003</p>
+              <h1 id="card-title"><span id="card-name">ゆい</span>のカード</h1>
+            </div>
+            <img src="images/bow.svg" width="56" height="40" alt="">
+          </header>
+
+          <!-- #card-grid はB・I・N・G・O順の5×5表。実装時は保存した配置で tbody を描き直す。
+               .is-open と読み上げ用の「抽選済み」を履歴に合わせて更新する。中央 .free-cell は最初から開いたまま。 -->
+          <div class="ticket-board">
+            <table id="card-grid">
+              <caption class="sr-only">自分のビンゴカード</caption>
+              <thead>
+                <tr><th scope="col">B</th><th scope="col">I</th><th scope="col">N</th><th scope="col">G</th><th scope="col">O</th></tr>
+              </thead>
+              <!-- 仮の盤面。履歴 8,54,23,71,36,12,59,18,67,3,48,42 に含まれる数字だけを開いている。 -->
+              <tbody>
+                <tr>
+                  <td class="is-open" data-number="8">8<span class="sr-only"> 抽選済み</span></td>
+                  <td data-number="27">27</td><td data-number="33">33</td>
+                  <td class="is-open" data-number="54">54<span class="sr-only"> 抽選済み</span></td><td data-number="65">65</td>
+                </tr>
+                <tr>
+                  <td data-number="14">14</td><td class="is-open" data-number="23">23<span class="sr-only"> 抽選済み</span></td>
+                  <td class="is-open" data-number="42">42<span class="sr-only"> 抽選済み</span></td>
+                  <td data-number="47">47</td><td data-number="73">73</td>
+                </tr>
+                <tr>
+                  <td class="is-open" data-number="3">3<span class="sr-only"> 抽選済み</span></td><td data-number="17">17</td>
+                  <td class="free-cell"><img src="images/heart.svg" width="24" height="20" alt="">FREE<span class="sr-only"> 最初から開いています</span></td>
+                  <td class="is-open" data-number="59">59<span class="sr-only"> 抽選済み</span></td><td data-number="68">68</td>
+                </tr>
+                <tr>
+                  <td data-number="11">11</td><td data-number="30">30</td>
+                  <td class="is-open" data-number="36">36<span class="sr-only"> 抽選済み</span></td>
+                  <td data-number="51">51</td><td class="is-open" data-number="71">71<span class="sr-only"> 抽選済み</span></td>
+                </tr>
+                <tr>
+                  <td data-number="6">6</td><td class="is-open" data-number="18">18<span class="sr-only"> 抽選済み</span></td>
+                  <td data-number="44">44</td><td data-number="56">56</td><td data-number="62">62</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="card-caption">出た番号のマスが自動で開きます</p>
+          </div>
+        </section>
+
+        <!-- #card-sync は自分が反映した回を示す。自分の当選が確定した時だけ #card-result の hidden を外して表示する。 -->
+        <p id="card-sync" class="card-sync state-playing" role="status">第12回まで反映済み</p>
+        <p id="card-end" class="card-sync state-ended">ゲームは終了しました</p>
+        <p id="card-result" class="card-sync" hidden></p>
+      </div>
+
+      <!-- 初回登録の見本。#card-entry は開始前の発行済み・未登録カードだけに見せる。 -->
+      <section id="card-entry" class="card-view" aria-labelledby="entry-heading">
+        <!-- 発行されたカードの識別子。JSはURLと発行記録を照合して #entry-id と下の #fallback-id に同じIDを表示する。 -->
+        <div class="entry-art">
+          <div class="entry-ticket">
+            <strong class="number" aria-hidden="true">B I N G O</strong>
+            <span id="entry-id" class="card-serial">CARD-003</span>
+          </div>
+          <img class="entry-bow" src="images/bow.svg" width="56" height="40" alt="">
+          <img class="entry-candy" src="images/candy.svg" width="48" height="32" alt="">
+        </div>
+        <h1 id="entry-heading">カードの参加登録</h1>
+        <p class="entry-intro">ゲーム開始前に登録を済ませてね。</p>
+
+        <!-- #entry-name の内容が表示名。値と10文字制限を後でJSで調べ、理由があれば #entry-feedback に表示する。 -->
+        <div class="entry-fields">
+          <div class="entry-label">
+            <label for="entry-name">表示名</label>
+            <span id="entry-limit">任意・10文字まで</span>
+          </div>
+          <input id="entry-name" type="text" placeholder="例）ゆい" aria-describedby="entry-limit entry-hint entry-feedback">
+          <p id="entry-hint" class="entry-hint">空欄なら <span id="fallback-id">CARD-003</span> で参加します。</p>
+          <p class="entry-hint">登録後の名前変更はできません。</p>
+          <p id="entry-feedback" class="entry-feedback" role="alert" hidden></p>
+          <!-- #register-card は初回登録の確定ボタン。card.js で保存に成功したときだけ盤面へ進む。 -->
+          <button id="register-card" class="button button-primary" type="button">このカードで参加する</button>
+        </div>
+      </section>
+
+      <!-- 受付が締め切られた未登録カード。#card-closed に切り替え、入力・登録・報告を止める。 -->
+      <section id="card-closed" class="card-view card-notice">
+        <h1>参加受付は終了しました</h1>
+        <p>このカードは今回のゲームに登録されていません。</p>
+      </section>
+      <!-- 旧ゲームのカード。#card-reset に切り替え、以前の数字・名前・当選結果が表示されないようにする。 -->
+      <section id="card-reset" class="card-view card-notice">
+        <h1>ゲームがリセットされました</h1>
+        <p>参加するには、進行役に新しいカードを発行してもらってください。</p>
+      </section>
+      <!-- データを読み込めない場合。JSは #card-error-reason に保存失敗・無効なURLなどの理由を表示する。 -->
+      <section id="card-error" class="card-view card-notice" aria-live="polite">
+        <h1>カードを確認できません</h1>
+        <p id="card-error-reason">カードの保存情報を読み込めませんでした。</p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

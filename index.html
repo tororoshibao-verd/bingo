@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>抽選ルーム｜Bonbon Bingo</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- 今はコメントだけの学習用ファイル。ルール、保存、進行役の画面の順で、HTMLを読み終えてから読み込む。 -->
+  <script defer src="js/game.js"></script>
+  <script defer src="js/storage.js"></script>
+  <script defer src="js/draw.js"></script>
+</head>
+<!--
+  デザイン確認用。ゲーム・当選者・確認件数はすべて仮表示で、ボタンにはまだ処理がない。
+  下の data-view の値を1か所だけ書き換えて保存し、ブラウザーで再読み込みすると各状態を確認できる。
+  prepare：参加受付、draw：抽選、checking：今回の確認待ち、final：最終確認、finished：終了。
+  手元の画面は card.html を開く。実装後の初回は準備中にし、再表示時は保存済みの状態から選ぶ。
+-->
+<body class="host-page" data-view="draw">
+  <!-- ゲーム名と操作する役割。実装後は操作権のないタブで #host-role を「閲覧中」にする。 -->
+  <header class="site-header">
+    <div class="header-inner">
+      <img class="brand-logo" src="images/logo.svg" width="217" height="46" alt="Bonbon Bingo">
+      <span class="badge host-role" id="host-role">進行役</span>
+    </div>
+  </header>
+
+  <main class="host-main">
+    <!-- その時点の見出しと状態。draw.js が body の data-view を更新すると対応する組だけが表示される。 -->
+    <div class="host-heading">
+      <h1>
+        <span data-show="prepare">参加カードの準備</span>
+        <span data-show="draw">抽選ルーム</span>
+        <span data-show="checking">カードの応答待ち</span>
+        <span data-show="final">最後のカードを照合中</span>
+        <span data-show="finished">ゲームの結果</span>
+      </h1>
+      <span class="badge host-role" data-show="prepare">参加受付中</span>
+      <span class="badge host-live" data-show="draw">進行中</span>
+      <span class="badge host-checking" data-show="checking">照合中</span>
+      <span class="badge host-final" data-show="final">最終確認中</span>
+      <span class="badge host-ended" data-show="finished">終了</span>
+    </div>
+
+    <!-- 保存失敗、権限不足、照合不能など。JSで理由を #host-message に表示して該当操作を止める。 -->
+    <p id="host-message" class="host-message" role="alert" hidden></p>
+
+    <!-- PCでは抽選と履歴を左、操作と当選結果を右に置く。狭い画面では同じ内容を縦に並べる。 -->
+    <div class="host-layout">
+      <div class="host-column">
+        <!-- 最新の確定番号と抽選操作。画像は背景だけ。ゲーム開始直後は番号を待機表示にする。 -->
+        <section class="host-stage panel" data-show="draw" aria-label="抽選">
+          <!-- 番号が確定したら .js-latest-letter と .js-latest-number を更新する。仮の表示はN列の42番。 -->
+          <div class="host-number-stage">
+            <span class="badge host-ball-label">最新の番号</span>
+            <div class="host-current-ball number" aria-live="polite" aria-atomic="true">
+              <span class="js-latest-letter">N</span>
+              <strong class="js-latest-number">42</strong>
+            </div>
+          </div>
+          <!-- 保存が成功した履歴の件数と残りプールの長さを表示。第12回の仮表示なので残りは63球。 -->
+          <div class="host-controls">
+            <dl class="host-counts">
+              <div><dt>抽選回数</dt><dd><strong class="number js-round">12</strong> 回</dd></div>
+              <div><dt>残りの球</dt><dd><strong class="number" id="remaining-balls">63</strong> 球</dd></div>
+            </dl>
+            <!-- #draw-next から次の抽選を要求。確認待ち・空のプール・操作権なしでは引けない。 -->
+            <button class="button button-primary" type="button" id="draw-next">次の番号を引く</button>
+          </div>
+        </section>
+
+        <!-- 準備と照合と終了の概要。仮の件数は各状態の別々の瞬間。実装時は保存値から説明と数値を更新する。 -->
+        <section class="host-ticket" data-show="prepare checking final finished" aria-label="進行の概要">
+          <div class="host-ticket-copy">
+            <!-- 登録済みだけが参加する。登録完了のたびに同じ意味の .js-registered-count をすべて更新する。 -->
+            <div data-show="prepare">
+              <h2>登録済みのカード</h2>
+              <p class="host-total"><strong class="number js-registered-count">8</strong> 枚</p>
+              <p id="registration-summary">発行した9枚のうち、1枚が登録待ちです。</p>
+              <progress id="registration-progress" value="8" max="9" aria-label="発行カードの登録状況">8 / 9</progress>
+            </div>
+            <!-- 対象回まで確認できた「本人報告＋代替」の合計。2種類の確認回数を同じ件数に二重計上しない。 -->
+            <div data-show="checking final">
+              <h2>確認できたカード</h2>
+              <p class="host-total">
+                <strong class="number" data-show="checking" id="checked-total">6</strong>
+                <strong class="number" data-show="final" id="final-checked-total">7</strong>
+                <span>/ <span class="number js-player-count">8</span> 枚</span>
+              </p>
+              <p id="check-summary" data-show="checking">2枚のカードからの応答を待っています。</p>
+              <p id="final-summary" data-show="final">残り1枚の結果を照合しています。</p>
+              <progress id="check-progress" data-show="checking" value="6" max="8" aria-label="今回の確認状況">6 / 8</progress>
+              <progress id="final-progress" data-show="final" value="7" max="8" aria-label="最終回の確認状況">7 / 8</progress>
+            </div>
+            <!-- 進行役が保存した最終結果。#winner-count は申告数ではなく確定したカード数。 -->
+            <div data-show="finished">
+              <h2>確定した当選カード</h2>
+              <p class="host-total"><strong id="winner-count" class="number">2</strong> 枚</p>
+              <p id="result-summary">第12回の抽選で、2人が同時にビンゴしました。</p>
+            </div>
+          </div>
+          <!-- チケット右端の装飾。状態は見出しでも伝わるため読み上げから除く。 -->
+          <div class="host-ticket-stub" aria-hidden="true">
+            <img data-show="prepare finished" src="images/candy.svg" width="64" alt="">
+            <img data-show="checking" src="images/sparkle.svg" width="48" alt="">
+            <img data-show="final" src="images/bow.svg" width="64" alt="">
+          </div>
+        </section>
+
+        <!-- 準備中の件数。未登録の発行枠はゲーム開始時の参加枚数に含めない。 -->
+        <section class="panel host-panel" data-show="prepare">
+          <h2>カードの登録状況</h2>
+          <dl class="host-facts">
+            <div><dt>発行済み</dt><dd><b id="issued-count">9</b> 枚</dd></div>
+            <div><dt>登録済み</dt><dd><b class="js-registered-count">8</b> 枚</dd></div>
+            <div><dt>登録待ち</dt><dd><b id="registration-pending">1</b> 枚</dd></div>
+          </dl>
+        </section>
+
+        <!-- 確認中は左側に内訳を表示。#verifying-reported と、各状態の代替照合・未確認の件数を更新する。 -->
+        <section class="panel host-panel" data-show="checking final">
+          <h2>照合の内訳</h2>
+          <dl class="host-facts">
+            <div><dt>カードから確認済み</dt><dd><b id="verifying-reported">6</b> 枚</dd></div>
+            <div><dt>進行役が代替照合済み</dt><dd><b data-show="checking" id="verifying-fallback">0</b><b data-show="final" id="final-fallback">1</b> 枚</dd></div>
+            <div><dt>未確認</dt><dd><b data-show="checking" id="verifying-pending">2</b><b data-show="final" id="final-pending">1</b> 枚</dd></div>
+          </dl>
+        </section>
+
+        <!-- 終了時の確定者。#result-winners も抽選中の #winner-list と同じ確定記録から描き直す。 -->
+        <section class="panel host-panel" data-show="finished">
+          <h2>確定した当選者</h2>
+          <ol id="result-winners" class="host-winners">
+            <li><span class="badge">第12回 · 同着</span><strong>あかり　／　みお</strong></li>
+          </ol>
+        </section>
+
+        <!-- #draw-history は保存した抽選順の履歴。終了後も読めるようにし、B・I・N・G・Oの列ごとに球の色を変える。 -->
+        <section class="panel host-panel host-history-panel" data-show="draw finished">
+          <div class="host-panel-heading"><h2>抽選履歴</h2><span class="host-caption">古い順</span></div>
+          <ol id="draw-history" class="host-history number">
+            <li class="ball-b">08</li>
+            <li class="ball-g">54</li>
+            <li class="ball-i">23</li>
+            <li class="ball-o">71</li>
+            <li class="ball-n">36</li>
+            <li class="ball-b">12</li>
+            <li class="ball-g">59</li>
+            <li class="ball-i">18</li>
+            <li class="ball-o">67</li>
+            <li class="ball-b">03</li>
+            <li class="ball-g">48</li>
+            <li class="ball-n">42</li>
+          </ol>
+        </section>
+      </div>
+
+      <!-- 進行役の操作と当選結果。スマホでは抽選・履歴の下へ1列に並ぶ。 -->
+      <div class="host-column host-side">
+        <!-- #issue-card は準備中に発行枠を作って新しいカードを別タブで開く。初回登録はカード画面で行う。 -->
+        <section class="panel host-panel" data-show="prepare">
+          <h2>カードの発行</h2>
+          <p>新しいカードが別タブで開きます。参加者に登録を済ませてもらいましょう。</p>
+          <button class="button button-secondary" type="button" id="issue-card">カードを発行する</button>
+        </section>
+        <!-- #start-game で参加を締め切り、登録済みカードだけを固定して開始する。 -->
+        <section class="panel host-panel" data-show="prepare">
+          <h2>ゲームの開始</h2>
+          <p>受付を締め切り、登録済みの<span class="js-registered-count">8</span>枚でゲームを開始します。</p>
+          <button class="button button-primary" type="button" id="start-game">参加を締め切って開始</button>
+        </section>
+
+        <!-- #winner-list は進行役が照合・確定した結果専用。同じ回の人をまとめ、未入力名にはカードIDを表示する。 -->
+        <section class="panel host-panel host-awards" data-show="draw">
+          <div class="host-panel-heading"><h2>当選者</h2><img src="images/bow.svg" width="52" height="34" alt=""></div>
+          <ol class="host-winners" id="winner-list">
+            <li><span class="badge">第12回</span> <span class="host-caption">2人同着</span><strong>あかり ・ みお</strong></li>
+          </ol>
+        </section>
+        <!-- 通常の抽選画面にも3種類の枚数を表示する。対象回・対象カードに照らして更新する。 -->
+        <section class="panel host-panel" data-show="draw">
+          <div class="host-panel-heading">
+            <h2>カードの確認状況</h2><span class="badge host-people">全<span class="js-player-count">8</span>枚</span>
+          </div>
+          <dl class="host-facts host-check-facts">
+            <div><dt>カードから確認済み</dt><dd><b id="reported-count">7</b> 枚</dd></div>
+            <div><dt>進行役が代替照合済み</dt><dd><b id="fallback-count">1</b> 枚</dd></div>
+            <div><dt>未確認</dt><dd><b id="pending-count">0</b> 枚</dd></div>
+          </dl>
+        </section>
+
+        <!-- 照合中と終了時にも対象回と確定番号を見せる。最新の番号と回数は抽選欄と同じ保存データを使う。 -->
+        <section class="panel host-panel" data-show="checking final finished">
+          <h2><span data-show="checking">今回の抽選番号</span><span data-show="final finished">最後の抽選番号</span></h2>
+          <div class="host-panel-heading host-last-number">
+            <strong class="number"><small class="js-latest-letter">N</small> <span class="js-latest-number">42</span></strong>
+            <span class="badge host-people">第<span class="js-round">12</span>回</span>
+          </div>
+        </section>
+        <!-- 未応答がある間の見本。待機中は次の抽選を始めない。 -->
+        <section class="panel host-panel" data-show="checking">
+          <h2>次の抽選</h2>
+          <p>応答がないカードは進行役が自動で照合します。全<span class="js-player-count">8</span>枚の確認が済むと、次の番号を引けます。</p>
+          <button class="button button-muted" type="button" disabled>確認中 · 次の番号を引く</button>
+        </section>
+        <!-- #end-game は最後の抽選回を固定して最終確認へ進む。照合待ちに押した場合も、その回の確認を引き継ぐ。 -->
+        <button class="button button-secondary host-finish" type="button" data-show="draw checking" id="end-game">ゲームを終了する</button>
+        <!-- 最終確認中は新しい抽選を止める。未確認が0枚になったら保存の完了後に終了表示へ。 -->
+        <section class="panel host-panel" data-show="final">
+          <h2>ゲームの終了</h2>
+          <p>新しい抽選は停止しました。全<span class="js-player-count">8</span>枚の結果を確認してから、当選者を確定してゲームを終了します。</p>
+        </section>
+        <!-- #reset-game は旧ゲーム専用の情報を消して新しい準備を始める。終了操作と区別する。 -->
+        <section class="panel host-panel" data-show="finished">
+          <h2>新しいゲームの準備</h2>
+          <p>リセットすると、今回の抽選履歴・当選結果・カード・登録名が消去されます。</p>
+          <button class="button button-secondary" type="button" id="reset-game">リセットして新しいゲームへ</button>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,811 @@
+/* 共通 → 進行役（index.html）→ 参加者（card.html）の順。
+   色を変えるときはまず :root、画面の配置を変えるときは各画面のセクションを見る。 */
+@font-face {
+  font-family: Fredoka;
+  src: url("../fonts/Fredoka-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --paper: #fff9f5;
+  --white: #fff;
+  --ink: #553648;
+  --muted: #795d6b;
+  --line: #e9d9dc;
+  --pink: #b94469;
+  --blush: #fadce6;
+  --rose: #f6afc6;
+  --mint: #d5f1e7;
+  --mint-ink: #36685d;
+  --lav: #e8dff7;
+  --butter: #fff0bf;
+  --sky: #d9eaf8;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+img { display: block; }
+button, input { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 3px solid var(--mint-ink); outline-offset: 3px; }
+
+/* 見た目は印や配色で示すマスの状態を、読み上げでも伝える。 */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.number {
+  font-family: Fredoka, "Arial Rounded MT Bold", system-ui, sans-serif;
+  font-weight: 700;
+}
+
+.site-header {
+  border-bottom: 1px solid var(--line);
+  background: var(--white);
+}
+
+.header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  min-height: 80px;
+  padding-block: 16px;
+}
+
+.brand-logo { max-width: 100%; height: auto; }
+
+.button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 8px 24px;
+  border: 1px solid transparent;
+  border-radius: 32px;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+}
+.button-primary { color: var(--white); background: var(--pink); }
+.button-secondary { color: var(--pink); border-color: var(--rose); background: var(--white); }
+.button-muted { color: var(--muted); background: var(--line); }
+
+
+/* 抽選画面。状態の見本は body の data-view で一つ選ぶ。非表示部分は読み上げ・Tab移動の対象からも外れる。 */
+.host-page[data-view="prepare"] [data-show]:not([data-show~="prepare"]),
+.host-page[data-view="draw"] [data-show]:not([data-show~="draw"]),
+.host-page[data-view="checking"] [data-show]:not([data-show~="checking"]),
+.host-page[data-view="final"] [data-show]:not([data-show~="final"]),
+.host-page[data-view="finished"] [data-show]:not([data-show~="finished"]) {
+  display: none;
+}
+
+.host-page .header-inner,
+.host-main {
+  width: min(1104px, calc(100% - 64px));
+  margin-inline: auto;
+}
+
+.host-page .header-inner {
+  padding-inline: 0;
+}
+
+.host-main {
+  padding-block: 32px 48px;
+}
+
+.host-heading,
+.host-panel-heading,
+.host-controls,
+.host-counts,
+.host-facts > div {
+  display: flex;
+  align-items: center;
+}
+
+.host-heading {
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.host-heading h1 {
+  margin: 0;
+  font-size: clamp(1.875rem, 4vw, 2.25rem);
+  line-height: 1.35;
+}
+
+.host-page .badge {
+  display: inline-block;
+  vertical-align: middle;
+  white-space: nowrap;
+  font-size: .875rem;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 8px 16px;
+  border-radius: 24px;
+}
+
+.host-role { background: var(--blush); }
+.host-live, .host-ended { background: var(--mint); color: var(--mint-ink); }
+.host-checking { background: var(--butter); }
+.host-final { background: var(--lav); }
+.host-people { background: var(--paper); color: var(--muted); }
+
+.host-live::before,
+.host-check-facts dt::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 8px;
+  background: var(--mint-ink);
+  margin-inline-end: 8px;
+  vertical-align: middle;
+}
+
+.host-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 700fr) minmax(0, 380fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.host-column,
+.host-panel {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+}
+
+.host-column { gap: 24px; }
+.host-side { gap: 16px; }
+
+.host-panel {
+  padding: 24px;
+  gap: 16px;
+  border: 1px solid var(--line);
+  background: var(--white);
+  border-radius: 24px;
+  overflow-wrap: anywhere;
+}
+
+.host-panel h2,
+.host-ticket h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.4;
+}
+
+.host-panel p,
+.host-ticket p {
+  margin: 0;
+}
+
+.host-panel-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.host-stage {
+  overflow: hidden;
+  min-width: 0;
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 0;
+}
+
+.host-number-stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 268px;
+  background: var(--blush) url("../images/hero.svg") center / 700px 268px no-repeat;
+}
+
+.host-ball-label {
+  position: absolute;
+  inset: 16px auto auto 16px;
+  background: var(--white);
+}
+
+.host-current-ball {
+  display: grid;
+  justify-items: center;
+  line-height: 1;
+}
+
+.host-current-ball .js-latest-letter {
+  margin-bottom: 8px;
+  color: var(--pink);
+  font-size: 1.5rem;
+}
+
+.host-current-ball strong {
+  font-size: 5.4375rem;
+  font-weight: 700;
+}
+
+.host-controls {
+  gap: 24px;
+  padding: 16px;
+}
+
+.host-controls .button {
+  flex: 1;
+  min-height: 56px;
+}
+
+.host-counts,
+.host-facts,
+.host-facts dd,
+.host-counts dd {
+  margin: 0;
+}
+
+.host-counts {
+  gap: 16px;
+}
+
+.host-counts div + div {
+  padding-inline-start: 16px;
+  border-inline-start: 1px solid var(--line);
+}
+
+.host-counts dt,
+.host-counts dd,
+.host-caption,
+.host-ticket-copy p:not(.host-total) {
+  font-size: .875rem;
+}
+
+.host-counts dt,
+.host-caption {
+  color: var(--muted);
+}
+
+.host-counts dt { font-weight: 700; }
+
+.host-counts strong {
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.host-history,
+.host-winners {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.host-history-panel { padding: 16px; }
+
+.host-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.host-history li {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 24px;
+  font-size: 1.125rem;
+}
+
+.ball-b { background: var(--rose); }
+.ball-i { background: var(--butter); }
+.ball-n { background: var(--mint); }
+.ball-g { background: var(--sky); }
+.ball-o { background: var(--lav); }
+
+.host-awards {
+  background: var(--butter);
+  border-color: transparent;
+}
+
+.host-winners li + li {
+  margin-top: 16px;
+}
+
+.host-winners .badge {
+  margin-inline-end: 8px;
+  background: var(--butter);
+}
+
+.host-awards .badge {
+  background: var(--white);
+}
+
+.host-winners strong {
+  font-size: 1.5rem;
+  overflow-wrap: anywhere;
+}
+
+.host-awards strong {
+  display: block;
+  margin-block-start: 8px;
+}
+
+.host-facts {
+  display: grid;
+  gap: 8px;
+}
+
+.host-facts > div {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.host-facts dd { white-space: nowrap; }
+
+.host-check-facts div:nth-child(2) dt::before { background: var(--rose); }
+.host-check-facts div:nth-child(3) dt::before { background: var(--line); }
+
+.host-page .host-finish {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.host-ticket {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  min-height: 216px;
+  border-radius: 24px;
+  background: var(--blush);
+  overflow: hidden;
+}
+
+.host-page[data-view="checking"] .host-ticket { background: var(--butter); }
+.host-page[data-view="final"] .host-ticket { background: var(--lav); }
+.host-page[data-view="finished"] .host-ticket { background: var(--mint); }
+
+.host-ticket-copy {
+  min-width: 0;
+  padding: 24px 32px;
+  align-self: center;
+}
+
+.host-ticket h2 { font-size: 1.125rem; }
+
+.host-ticket .host-total {
+  margin: 8px 0;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.host-total strong {
+  font-size: clamp(3rem, 8vw, 4.75rem);
+}
+
+.host-total span {
+  font-size: 1.5rem;
+}
+
+.host-ticket progress {
+  display: block;
+  appearance: none;
+  width: min(100%, 352px);
+  height: 8px;
+  margin-top: 8px;
+  background: var(--white);
+  --segment: 12.5%;
+  mask-image: repeating-linear-gradient(to right, #000 0 calc(var(--segment) - 4px), transparent calc(var(--segment) - 4px) var(--segment));
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.host-page[data-view="prepare"] progress { --segment: calc(100% / 9); }
+.host-ticket progress::-webkit-progress-bar { background: transparent; }
+.host-ticket progress::-webkit-progress-value { background: var(--mint-ink); }
+.host-ticket progress::-moz-progress-bar { background: var(--mint-ink); }
+.host-page[data-view="prepare"] progress::-webkit-progress-value { background: var(--pink); }
+.host-page[data-view="prepare"] progress::-moz-progress-bar { background: var(--pink); }
+
+.host-ticket-stub {
+  position: relative;
+  flex: 0 0 112px;
+  display: grid;
+  place-items: center;
+  border-inline-start: 2px dashed var(--white);
+  background: url("../images/sparkle.svg") 76% 28% / 12px 12px no-repeat,
+    url("../images/sparkle.svg") 18% 70% / 8px 8px no-repeat;
+}
+
+.host-ticket-stub::before,
+.host-ticket-stub::after {
+  content: "";
+  position: absolute;
+  left: -12px;
+  width: 24px;
+  height: 24px;
+  background: var(--paper);
+  border-radius: 16px;
+}
+
+.host-ticket-stub::before { top: -12px; }
+.host-ticket-stub::after { bottom: -12px; }
+
+.host-last-number strong { font-size: 2.25rem; }
+.host-last-number small { font-size: 1.125rem; color: var(--mint-ink); }
+
+.host-message {
+  padding: 16px;
+  border: 1px solid var(--pink);
+  border-radius: 16px;
+  background: var(--white);
+  overflow-wrap: anywhere;
+}
+
+/* タブレットからは進行操作を下に回し、番号を読む面積を確保する。 */
+@media (max-width: 1023px) {
+  .host-layout { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .host-column { gap: 16px; }
+}
+
+/* スマホは両端16px。絵の中央を表示し、抽選ボタンは1行分の幅にする。 */
+@media (max-width: 600px) {
+  .host-main,
+  .host-page .header-inner { width: calc(100% - 32px); }
+  .host-main { padding-block: 16px 32px; }
+  .host-controls { flex-direction: column; gap: 16px; }
+  .host-controls .button { width: 100%; }
+  .host-number-stage { min-height: 248px; }
+  .host-panel { padding: 16px; }
+  /* 390px幅では6球ずつ。さらに狭い端末では列幅に合わせて球も小さくする。 */
+  .host-history {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    max-width: 328px;
+  }
+  .host-history li { width: 100%; max-width: 48px; height: auto; aspect-ratio: 1; }
+  .host-ticket-copy { padding: 24px 16px; }
+  .host-ticket-stub { flex-basis: 72px; }
+  .host-ticket-stub img { max-width: 48px; }
+  .host-page .brand-logo { max-width: 54vw; height: auto; }
+}
+
+/* 参加者画面。2枚の包装紙をスマホ幅の外側にだけ敷く。 */
+.card-page {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  background: var(--blush);
+}
+
+.card-page::before,
+.card-page::after {
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  width: max(0px, calc((100% - 390px) / 2));
+  content: "";
+  background-size: 445px 880px;
+  background-repeat: repeat;
+}
+
+.card-page::before {
+  left: 0;
+  background-image: url("../images/wrapper-left.svg");
+  background-position: right top;
+}
+
+.card-page::after {
+  right: 0;
+  background-image: url("../images/wrapper-right.svg");
+  background-position: left top;
+}
+
+.card-shell {
+  width: min(100%, 390px);
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin-inline: auto;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: 0 0 0 4px rgb(246 175 198 / 48%);
+}
+
+.card-shell .header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 80px;
+  width: 100%;
+  padding: 16px;
+  margin: 0;
+}
+
+.card-shell .brand-logo { width: 157px; height: auto; }
+.card-main { padding: 16px 16px 32px; }
+.card-shell h1,
+.card-shell h2,
+.card-shell p { margin: 0; }
+.card-shell h1 { font-size: 1.75rem; line-height: 1.35; }
+.card-shell h2 { font-size: 1.5rem; line-height: 1.35; }
+
+/* 一度に見える状態は1つ。body の data-card-state が将来の描画の入口になる。 */
+.card-view,
+.card-page .card-badge,
+.card-page .card-sync.state-ended,
+.card-page .card-sync.state-playing { display: none; }
+.card-page[data-card-state="playing"] #card-play,
+.card-page[data-card-state="ended"] #card-play,
+.card-page[data-card-state="register"] #card-entry,
+.card-page[data-card-state="closed"] #card-closed,
+.card-page[data-card-state="reset"] #card-reset,
+.card-page[data-card-state="error"] #card-error { display: block; }
+.card-page[data-card-state="playing"] .state-playing,
+.card-page[data-card-state="ended"] .state-ended,
+.card-page[data-card-state="register"] .state-register,
+.card-page[data-card-state="closed"] .state-closed,
+.card-page[data-card-state="reset"] .state-reset,
+.card-page[data-card-state="error"] .state-error { display: inline-flex; }
+
+.card-page .card-badge {
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  color: var(--pink);
+  background: var(--blush);
+  border-radius: 24px;
+  font-size: .875rem;
+  font-weight: 700;
+}
+
+.card-page .card-badge.state-playing,
+.card-page .card-badge.state-ended { color: var(--mint-ink); background: var(--mint); }
+
+.card-badge::before,
+.card-sync::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 8px;
+  background: currentColor;
+}
+
+.latest-card-ball {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 128px;
+  padding: 16px 16px 16px 24px;
+  border-radius: 24px;
+  background: var(--lav);
+}
+
+.latest-card-ball::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  right: 0;
+  top: 50%;
+  width: 152px;
+  height: 152px;
+  border: 16px solid rgb(255 255 255 / 35%);
+  border-radius: 80px;
+  transform: translateY(-50%);
+}
+
+.latest-card-ball::after {
+  content: "";
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  width: 16px;
+  height: 16px;
+  background: url("../images/sparkle.svg") center / contain no-repeat;
+}
+
+#card-round {
+  display: inline-block;
+  padding: 8px 16px;
+  margin-top: 8px;
+  border-radius: 24px;
+  background: var(--white);
+  font-size: .875rem;
+  font-weight: 700;
+}
+
+.latest-value { display: flex; align-items: center; gap: 8px; }
+.latest-value > * {
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--ink);
+  border-radius: 40px;
+}
+#card-letter { width: 32px; height: 32px; background: var(--mint); }
+#card-number { width: 80px; height: 80px; background: var(--white); font-size: 2.5rem; }
+
+.player-ticket,
+.entry-fields,
+.card-notice {
+  border: 1px solid var(--line);
+  border-radius: 32px;
+  background: var(--white);
+}
+
+.player-ticket { margin-block: 16px 24px; box-shadow: 0 8px var(--blush); }
+.ticket-owner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 24px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.ticket-owner > div { min-width: 0; }
+.card-serial,
+#card-name,
+#fallback-id { overflow-wrap: anywhere; }
+.card-serial { color: var(--pink); font-size: .875rem; font-weight: 800; letter-spacing: .08em; }
+#card-title { margin-top: 8px; }
+.ticket-owner > img {
+  flex: none;
+  width: 56px;
+  height: 56px;
+  border-radius: 32px;
+  background-color: var(--blush);
+  object-fit: contain;
+}
+
+.ticket-board { padding: 8px 24px 24px; }
+#card-grid {
+  width: calc(100% + 16px);
+  margin-inline: -8px;
+  border-collapse: separate;
+  border-spacing: 8px;
+  table-layout: fixed;
+  text-align: center;
+  font-family: Fredoka, "Arial Rounded MT Bold", system-ui, sans-serif;
+  font-weight: 700;
+}
+
+#card-grid th,
+#card-grid td { padding: 0; text-align: center; vertical-align: middle; }
+#card-grid th { height: 40px; border-radius: 16px; font-size: 1.5rem; }
+#card-grid th:nth-child(1) { background: var(--rose); }
+#card-grid th:nth-child(2) { background: var(--butter); }
+#card-grid th:nth-child(3) { background: var(--mint); }
+#card-grid th:nth-child(4) { background: var(--sky); }
+#card-grid th:nth-child(5) { background: var(--lav); }
+
+#card-grid td {
+  position: relative;
+  height: clamp(40px, calc((100vw - 112px) / 5), 56px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+#card-grid .is-open { background: var(--blush); color: var(--pink); border-color: var(--rose); }
+#card-grid .is-open::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  background: url("../images/check.svg") center / contain no-repeat;
+}
+#card-grid .free-cell {
+  color: var(--ink);
+  border-color: var(--butter);
+  background: var(--butter);
+  font-size: 1rem;
+}
+.free-cell img { display: block; margin: 0 auto; }
+.card-caption,
+.card-sync,
+.entry-hint,
+#entry-limit { color: var(--muted); font-size: .875rem; }
+.ticket-board .card-caption { margin-top: 16px; text-align: center; }
+.card-shell .card-sync {
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+.card-sync::before { background: var(--mint-ink); }
+#card-result:not([hidden]) { display: flex; margin-top: 8px; color: var(--pink); }
+
+/* 初回登録は同じスマホ幅の中で名前入力に集中する。 */
+.entry-art {
+  display: grid;
+  place-items: center;
+  position: relative;
+  padding: 48px 24px;
+  min-height: 200px;
+  border-radius: 24px;
+  background:
+    url("../images/sparkle.svg") 12% 24% / 16px 16px no-repeat,
+    url("../images/sparkle.svg") 83% 68% / 16px 16px no-repeat,
+    radial-gradient(circle, transparent 74px, rgb(255 255 255 / 34%) 74px 96px, transparent 96px),
+    var(--blush);
+}
+.entry-ticket {
+  max-width: 100%;
+  min-width: min(192px, 100%);
+  border: 2px solid var(--pink);
+  border-radius: 24px;
+  background: var(--white);
+  text-align: center;
+}
+.entry-ticket > * { display: block; padding: 8px; }
+.entry-ticket > strong { font-size: 1.5rem; border-bottom: 1px dashed var(--line); }
+.entry-bow,
+.entry-candy { position: absolute; }
+.entry-bow { top: 16%; left: 64%; }
+.entry-candy { top: 65%; right: 75%; }
+#entry-heading { margin: 24px 0 8px; }
+.entry-intro { color: var(--muted); }
+.entry-fields { padding: 24px; margin-top: 32px; border-radius: 24px; }
+.entry-label { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
+.entry-label label { font-weight: 700; }
+#entry-name {
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 16px;
+  margin: 8px 0 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+.entry-hint + .entry-hint { margin-top: 8px; }
+.entry-feedback { margin-top: 8px; color: var(--pink); }
+#register-card { width: 100%; margin-top: 24px; }
+.card-notice { padding: 24px; }
+.card-notice h1 { font-size: 1.5rem; }
+.card-notice p { margin-top: 16px; }
+
+@media (max-width: 360px) {
+  .ticket-board { padding-inline: 16px; }
+  .latest-card-ball { padding-inline: 16px; }
+  #card-number { width: 64px; height: 64px; }
+}
