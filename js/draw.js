@@ -1,79 +1,364 @@
-// draw.js　進行役の画面と、ゲームを進めるタイミングを担当します。
-// 先に game.js でルールをコンソールで試し、storage.js で試し書きした状態を読み戻しましょう。
-// このファイルでは、まず準備・カード発行（手順1〜3）まで作ります。次に card.js の登録と報告を
-// 書いてから手順4以降へ戻ると、実際のカードを使って照合できます。各段階で小さく試してください。
+// 進行役の画面。game.js が番号とビンゴを計算し、BingoStore がタブ間の排他と保存を受け持つ。
+(() => {
+    const STORE = BingoStore;
+    const WAIT_MS = 2000; // 抽選を保存してから、未応答カードを代替照合するまでの時間。
+    const byId = id => document.getElementById(id);
+    const commandIds = ["issue-card", "start-game", "draw-next", "end-game", "reset-game"];
+    let displayed = null;
+    let releaseHost = null;
+    let lockError = null;
+    let busy = false;
+    let notice = "";
+    let deadlineTimer;
+    let refreshTimer;
+    let refreshAll = false;
+    const changedIds = new Set();
 
-// 手順1　画面を開いたら、操作権を確認してから復元・初期化する
-// 最初に storage.js を通して進行役の操作権を取りにいきます。取れないタブは #host-role を「閲覧中」にし、
-// 保存内容を読んで表示します。進行役を閉じたら、別タブが操作権の取得を再度試せます。
-// 権限を得たら短い書き込み用の鍵を取り、現在の gameId と進行情報を改めて読みます。既存ゲームは復元します。
-// 初回でゲームが本当に存在しないときだけ、新しいID・75球・空の履歴・準備中の状態を保存します。
-// IDはあるのに進行情報が見つからない場合、破損・保存失敗の場合は #host-message に理由を表示して止めます。
-// ボタンを無効にするだけでは別タブの書き込みは止まりません。更新直前にも操作権と現在のIDを確認します。
-// 確認：2タブを同時に開いてもゲームは1つ。権限を渡してから元のタブが書き込まないことも試します。
+    function setText(selector, value) {
+        for (const element of document.querySelectorAll(selector)) {
+            if (element.textContent !== String(value)) element.textContent = value;
+        }
+    }
 
-// 手順2　「値を描く」部分を「イベント」から分ける
-// 保存した進行情報を受け取り、まず要素を取得して文字を差し替える練習をします。
-// index.html の body の data-view は表示用です。prepare・draw・checking・final・finished のうち、
-// 保存したゲームの状態と今回の確認状況に合う値を選びます。表示用の仮データを保存には使いません。
-// 履歴の最後から .js-latest-number と .js-latest-letter、長さから .js-round、プールから #remaining-balls を更新します。
-// 同じ値を見せるクラスは複数箇所にあります。すべてを取得して for で更新すると表示の食い違いを防げます。
-// 履歴が空なら最新番号は「―」、回数は0、残りは75。#draw-history を一度空にし、古い順に球を並べます。
-// 確認：同じ状態を2回描いても履歴が2倍にならず、ページを開き直しても次の番号は引かれません。
+    function message(value) {
+        setText("#host-message", value);
+        byId("host-message").hidden = !value;
+    }
 
-// 手順3　発行、登録、参加締切を順番に扱う
-// メモ帳の「追加」ボタンのように、#issue-card と #start-game にクリックイベントを一度ずつ登録します。
-// 発行の入力は準備中のゲームID。短い鍵の中で衝突しないカードIDを選び、ゲームの発行済みIDと、
-// そのID用の「配置は未作成」という発行票を保存します。両方が保存できてから gameId・cardId を
-// URLに付けて card.html を別タブで開きます。途中までしか保存できなければ、同じ発行枠を確認して修復します。
-// 枚数に固定上限はありません。配置はカードの初回表示で card.js が未登録状態として一度だけ作ります。
-// 開けなかった時も同じ発行済みURLで再度開けるようにし、失敗のたびに別のIDを発行しない考え方を試します。
-// カード側の初回登録は card.js の担当。#issued-count、.js-registered-count、#registration-pending と
-// #registration-summary、#registration-progress を、発行枠と登録済みカードの違いに注意して更新します。
-// 開始時は登録と締切が行き違わないよう、storage.js の共通の排他区間で最新状態を再読します。
-// この瞬間に登録確定したカードIDと配置をスナップショット（後から変えない控え）として進行情報へ保存します。
-// 未登録の発行枠は照合対象に入りません。保存したらゲーム開始。開始後は発行と初回登録を止めます。
-// 確認：9枚発行し8枚登録した例なら参加は8枚。開始と登録を同時に試し、締切後の新規登録と、登録済みの復元を区別します。
+    function disableCommands() {
+        for (const id of commandIds) byId(id).disabled = true;
+    }
 
-// 手順4　次の抽選・終了が共用する「今回までの確認」を作る（先に card.js の報告と game.js の判定）
-// 初回表示・タブ復帰・抽選後・報告の通知時、さらに #draw-next や #end-game の操作時に実行します。
-// 入力はゲームID、開始時に固定した全参加カード、対象回、対象回までの履歴、各カードの最新報告です。
-// 第1回を引く前は履歴0回・成立なしの初期状態。抽選後は、カードごとに今回と同じ checkedDrawCount と
-// 判定結果が一緒に届いているか確かめます。すでにビンゴしたカードも同じ確認対象です。
-// gameId・cardId・回数の違う報告で今回を確認済みにしません。遅延・閉じたタブは未確認のまま待ちます。
-// 有効な報告はカードの保存済み配置と履歴で game.js に再計算してもらい、最初の成立回も照合します。
-// 一定時間待っても未応答のカードだけを、進行役が控えの配置と履歴から代替照合します。
-// 待ち時間は調整可能にし、毎瞬、全カードと全履歴を読み直さず、報告通知と待ち時間の経過を使います。
-// 配置が欠けて再計算できないなど根拠が足りないときは #host-message に理由を出し、その回で止まります。
-// 待っている間にゲームや権限が変わったら、その古い待機の続きを保存しません。
-// 確認：カードを閉じたまま進めても未確認→代替照合済みになる。遅れた報告で二重計上や回数の逆戻りが起きない。
+    function showFailure(error) {
+        clearTimeout(deadlineTimer);
+        disableCommands();
+        message(error.message || "保存内容を読み込めませんでした。ページを再読み込みしてください。");
+    }
 
-// 手順5　確定したものだけを当選表と件数に反映する
-// 照合結果をゲームIDとカードIDでまとめ、最初の成立回 firstBingoAt の順にグループ化します。
-// 同じ抽選回は同着。受信順や表示名だけで並べず、同名ならカードIDを添えて区別します。
-// 照合状況・当選者一覧を進行情報として保存できた後、#winner-list と #result-winners を同じ結果から描きます。
-// 名前は文字として追加します。HTMLとして解釈させず、空欄時はカードID全体を表示します。
-// #winner-count・#result-summary、.js-player-count と #reported-count・#fallback-count・#pending-count を更新します。
-// checking と final では #verifying-reported、#verifying-fallback・#final-fallback、#verifying-pending・#final-pending、
-// #checked-total・#final-checked-total、#check-summary・#final-summary、#check-progress・#final-progress も対象です。
-// 確認：同着2人を両方表示。同じカードを複数タブで開いても1人分。閉じたカードの当選も成立した回に入ります。
+    function setProgress(id, done, total) {
+        const progress = byId(id);
+        progress.max = Math.max(1, total);
+        progress.value = done;
+        progress.textContent = `${done} / ${total}`;
+        progress.setAttribute("aria-valuetext", `${total}枚中${done}枚`);
+        progress.style.setProperty("--segment", `${100 / Math.min(20, progress.max)}%`);
+    }
 
-// 手順6　#draw-next から1回分だけ抽選する
-// 現役の進行役、進行中、終了要求なし、二重処理中でない、前回まで全カード確認済み、残り球ありの順に if で考えます。
-// ボタンを押したら処理中を記録し、上の条件を最新の保存内容でも再確認。未確認なら手順4の確認を先にします。
-// game.js に残りプールと履歴を渡し、受け取った新しいプールと履歴を今回の未確認状態と同じ進行情報にまとめて保存します。
-// 成功したら手順2で自分の画面も更新します。storage イベントは自分の書き込みでは自分に届きません。
-// 登録カードは card.js で履歴を受信し、当選の有無にかかわらず今回までの報告を返します。ここから手順4・5へ戻ります。
-// 確認：連打しても1回。75回目も全カードを確認し、それ以降は「すべて抽選済み」を案内して76回目を止めます。
+    function element(tag, content, className) {
+        const node = document.createElement(tag);
+        node.textContent = content;
+        if (className) node.className = className;
+        return node;
+    }
 
-// 手順7　#end-game で最後の回を固定して終了を確定する
-// 「終了する」が受理された時点で最終確認中と対象回を保存し、次の抽選を止めます。進行中の確認作業と二重に始めません。
-// カードの報告は最終確認中も受け付けます。手順4・5で全件の結果を照合・保存できた時点で初めて終了を記録します。
-// 終了後は結果・履歴を読み取れます。当選者が出ただけでは終了しません。
-// 確認：最後の1球の直後に終了を押しても、遅れて届く同着を取りこぼさず、新たな抽選も発生しません。
+    function letter(number) {
+        return number ? "BINGO"[Math.floor((number - 1) / 15)] : "";
+    }
 
-// 手順8　#reset-game で次の準備へ戻る
-// 終了後のリセットは storage.js に旧ゲームIDを渡し、アプリ固有の旧ゲームのデータだけを対象にします。
-// 未完了の書き込み・通知を旧IDで拒否できるようにして、カード・名前・報告・履歴・結果を消し、新しいIDの準備状態を作ります。
-// 途中で保存に失敗したら #host-message に知らせ、新しいゲームとして成功表示する前に状態を読み直します。
-// 確認：古いカードURLで元の名前や盤面が復活せず、同一オリジンのメモ帳データが残ることを確認します。
+    // 同じ内容ならリストを作り直さない。カードの通知が続いてもリンクのキーボードフォーカスが残る。
+    function displayLists(game, cards) {
+        const last = displayed;
+        const newGame = last?.gameId !== game.gameId;
+        const ids = cards.map(card => card.cardId);
+        if (newGame || JSON.stringify(last.links) !== JSON.stringify(ids)) {
+            const links = ids.map(id => {
+                const link = element("a", `${id} を開く`);
+                link.href = STORE.cardUrl(game.gameId, id);
+                link.target = "_blank";
+                link.rel = "noopener";
+                const item = document.createElement("li");
+                item.append(link);
+                return item;
+            });
+            byId("card-links").replaceChildren(...links);
+            byId("issued-links").hidden = !links.length;
+            if (newGame) byId("issued-links").open = false;
+        }
+        if (newGame || last.round !== game.history.length) {
+            byId("draw-history").replaceChildren(...game.history.map(n =>
+                element("li", String(n).padStart(2, "0"), "ball-" + letter(n).toLowerCase())));
+            byId("history-empty").hidden = game.history.length > 0;
+        }
+
+        const winners = JSON.stringify(game.winners);
+        if (newGame || last.winners !== winners) {
+            const names = new Map();
+            for (const card of game.participants) {
+                names.set(card.displayName, (names.get(card.displayName) || 0) + 1);
+            }
+            const items = game.winners.map(group => {
+                const item = document.createElement("li");
+                item.append(element("span", `第${group.firstBingoAt}回`, "badge"));
+                if (group.cards.length > 1) item.append(element("span", `${group.cards.length}人同着`, "host-caption"));
+                const labels = group.cards.map(card => names.get(card.displayName) > 1 && card.displayName !== card.cardId
+                    ? `${card.displayName}（${card.cardId}）` : card.displayName);
+                item.append(element("strong", labels.join(" ・ ")));
+                return item;
+            });
+            byId("result-winners").replaceChildren(...items.map(item => item.cloneNode(true)));
+            byId("winner-list").replaceChildren(...items);
+            byId("winners-empty").hidden = byId("result-empty").hidden = items.length > 0;
+        }
+        displayed = {gameId: game.gameId, round: game.history.length, links: ids, winners};
+    }
+
+    function issuedCards(game) {
+        return game.issuedIds.map(id => {
+            const card = STORE.readCard(game.gameId, id);
+            if (!card) throw new Error(`${id} の発行記録が見つかりません。保存内容を確認してください。`);
+            return card;
+        });
+    }
+
+    function countChecks(game) {
+        const reported = game.checks.filter(check => check.status === "card-confirmed").length;
+        const fallback = game.checks.filter(check => check.status === "fallback-confirmed").length;
+        return {reported, fallback, pending: game.participants.length - reported - fallback};
+    }
+
+    // 描画は必ず保存後。番号・当選者・ボタンの可否を、同じ回の保存値からまとめて作る。
+    function render(game) {
+        clearTimeout(deadlineTimer);
+        const host = STORE.hasHost();
+        setText("#host-role", host ? "進行役" : "閲覧中");
+        if (lockError) {
+            showFailure(lockError);
+            return;
+        }
+        if (!game) {
+            displayed = null;
+            disableCommands();
+            message("進行役の画面でゲームを準備しています。");
+            return;
+        }
+        const prepare = game.phase === "prepare";
+        const live = game.phase === "playing";
+        const cards = prepare ? issuedCards(game) : game.participants;
+        const registered = prepare ? cards.filter(card => card.registered).length : cards.length;
+        const {reported, fallback, pending} = countChecks(game);
+        const checked = reported + fallback;
+        const total = game.participants.length;
+        const latest = game.history.at(-1);
+        const round = game.history.length;
+        document.body.dataset.view = live ? (pending ? "checking" : "draw") : game.phase;
+
+        setText(".js-registered-count", registered);
+        setText("#issued-count", game.issuedIds.length);
+        setText("#registration-pending", game.issuedIds.length - registered);
+        setText("#registration-summary", cards.length
+            ? `発行した${game.issuedIds.length}枚のうち、${game.issuedIds.length - registered}枚が登録待ちです。`
+            : "カードを発行して参加者を受け付けましょう。");
+        setProgress("registration-progress", registered, game.issuedIds.length);
+        setText(".js-round", round);
+        setText(".js-latest-letter", letter(latest));
+        setText(".js-latest-number", latest ?? "―");
+        setText("#remaining-balls", game.numbers.length);
+        setText("#draw-next", game.numbers.length ? "次の番号を引く" : "75球すべて抽選済み");
+        setText(".js-player-count", total);
+        setText("#checked-total, #final-checked-total", checked);
+        setText("#verifying-reported, #reported-count", reported);
+        setText("#verifying-fallback, #final-fallback, #fallback-count", fallback);
+        setText("#verifying-pending, #final-pending, #pending-count", pending);
+        setText("#check-summary, #final-summary", `第${round}回まで、残り${pending}枚の結果を照合しています。`);
+        setProgress("check-progress", checked, total);
+        setProgress("final-progress", checked, total);
+        const winnerCount = game.winners.reduce((n, group) => n + group.cards.length, 0);
+        setText("#winner-count", winnerCount);
+        setText("#result-summary", `第${round}回で終了。参加${total}枚のうち${winnerCount}枚がビンゴしました。`);
+
+        displayLists(game, cards);
+        byId("issue-card").disabled = !host || busy || !prepare;
+        byId("start-game").disabled = !host || busy || !prepare;
+        byId("draw-next").disabled = !host || busy || !live || pending > 0 || !game.numbers.length;
+        byId("end-game").disabled = !host || busy || !live;
+        byId("reset-game").disabled = !host || busy || game.phase !== "finished";
+
+        const problems = game.checks.filter(check => check.status === "unconfirmed" && check.reason !== waiting);
+        const reasons = problems.map(check => `${check.cardId}：${check.reason}`);
+        if (!host) reasons.push("ほかの抽選画面が進行中です。その画面を閉じると、ここで操作できます。");
+        if (notice) reasons.push(notice);
+        message(reasons.join(" "));
+        const waitingForReply = game.checks.length < total || game.checks.some(check => check.reason === waiting);
+        if (host && (live || game.phase === "final") && pending && (waitingForReply || Date.now() < game.deadline)) {
+            deadlineTimer = setTimeout(() => scheduleRefresh(), Math.max(0, game.deadline - Date.now()) + 1);
+        }
+    }
+
+    const waiting = "対象回までの確認報告を待っています。";
+
+    function evaluateCard(game, card, allowFallback) {
+        let result;
+        try {
+            // 参加締切時に固定した配置と、現在の保存先の両方を確認する。欠損したカードを「外れ」にしない。
+            const saved = STORE.readCard(game.gameId, card.cardId);
+            if (!saved?.registered || saved.displayName !== card.displayName
+                || JSON.stringify(saved.cardRows) !== JSON.stringify(card.cardRows)) {
+                throw new Error("参加時のカードと保存情報が一致しません。");
+            }
+            const report = STORE.readReport(game.gameId, card.cardId);
+            result = checkCardReport(card, game.history, report, {allowFallback});
+        } catch (error) {
+            result = {status: "unconfirmed", reason: error.message};
+        }
+        return {gameId: game.gameId, cardId: card.cardId, ...result};
+    }
+
+    // 本人報告の通知は変更されたカードだけ再計算。復帰・締切時には全件を読み直して取りこぼしを拾う。
+    function reconcile(game, ids = null) {
+        if (game.phase !== "playing" && game.phase !== "final") return;
+        const previous = new Map(game.checks.map(check => [check.cardId, check]));
+        const expired = Date.now() >= game.deadline;
+        const checks = game.participants.map(card => {
+            const cached = previous.get(card.cardId);
+            if (ids && cached && !ids.has(card.cardId) && !(expired && cached.status === "unconfirmed")) return cached;
+            return evaluateCard(game, card, expired);
+        });
+        const changed = JSON.stringify(checks) !== JSON.stringify(game.checks);
+        game.checks = checks;
+        if (changed) {
+            // 前の回に確定した当選は、今回の報告待ちでも表示を続ける。同じIDは game.js がまとめる。
+            const earlier = game.winners.flatMap(group => group.cards.map(card => ({
+                ...card, hasBingo: true, firstBingoAt: group.firstBingoAt, status: "card-confirmed",
+            })));
+            game.winners = groupBingoWinners([...earlier, ...checks]);
+        }
+        let save = changed;
+        if (countChecks(game).pending === 0) {
+            const round = game.history.length;
+            const summary = {
+                round,
+                reported: checks.filter(c => c.status === "card-confirmed").map(c => c.cardId),
+                fallback: checks.filter(c => c.status === "fallback-confirmed").map(c => c.cardId),
+            };
+            if (JSON.stringify(game.rounds.at(-1)) !== JSON.stringify(summary)) {
+                if (game.rounds.at(-1)?.round === round) game.rounds.pop();
+                game.rounds.push(summary);
+                save = true;
+            }
+            if (game.phase === "final") {
+                game.phase = "finished";
+                game.deadline = null;
+                save = true;
+            }
+        }
+        if (save) STORE.writeGame(game);
+    }
+
+    // 関連する通知を短くまとめる。待機期限のタイマーと通知が重なっても保存は共有の鍵の中で直列に行う。
+    function scheduleRefresh(id) {
+        if (id) changedIds.add(id);
+        else refreshAll = true;
+        if (refreshTimer !== undefined) return;
+        refreshTimer = setTimeout(async () => {
+            refreshTimer = undefined;
+            const ids = refreshAll ? null : new Set(changedIds);
+            refreshAll = false;
+            changedIds.clear();
+            try {
+                if (STORE.hasHost()) {
+                    await STORE.withWrite(() => {
+                        if (!STORE.hasHost()) return;
+                        const game = STORE.initialGame();
+                        reconcile(game, ids);
+                    });
+                }
+                render(STORE.readGame());
+            } catch (error) {
+                showFailure(error);
+            }
+        }, 16);
+    }
+
+    // ボタンを押したときに見ていたゲームIDと回を控える。ロックの待機中に別の状態になったら操作を取り消す。
+    async function command(event) {
+        const id = event.currentTarget.id;
+        if (busy || !displayed || !STORE.hasHost() || event.detail > 1 || byId(id).disabled) return;
+        const expected = displayed;
+        let popup;
+        busy = true;
+        notice = "";
+        disableCommands();
+        try {
+            // ユーザーのクリック中にタブを確保し、発行が保存できてからカードURLへ移る。
+            if (id === "issue-card") {
+                popup = window.open("about:blank", "_blank");
+                if (popup) popup.opener = null;
+            }
+            await STORE.withWrite(() => {
+                const game = STORE.readGame();
+                if (!STORE.hasHost() || !game || game.gameId !== expected.gameId || game.history.length !== expected.round) {
+                    throw new Error("ゲームまたは操作権が変わりました。現在の状態を確認してください。");
+                }
+                if (id === "issue-card" && game.phase === "prepare") {
+                    const cardId = STORE.issueCard(game);
+                    if (popup && !popup.closed) popup.location.replace(STORE.cardUrl(game.gameId, cardId));
+                    else {
+                        byId("issued-links").open = true;
+                        notice = `${cardId} を発行しました。「発行したカードを開く」から開けます。`;
+                    }
+                    return;
+                }
+                if (id === "start-game" && game.phase === "prepare") {
+                    // 登録処理と同じ鍵を使うため、締切時点の参加者と盤面を一度に固定できる。
+                    game.participants = issuedCards(game).filter(card => card.registered);
+                    game.phase = "playing";
+                    game.deadline = Date.now() + WAIT_MS;
+                } else if (id === "end-game" && game.phase === "playing") {
+                    game.phase = "final"; // この状態を先に保存する。待機中の引き直しは以後できない。
+                } else if (id === "draw-next" && game.phase === "playing") {
+                    reconcile(game);
+                    if (countChecks(game).pending || !game.numbers.length) return;
+                    const draw = drawOne(game.numbers, game.history);
+                    game.numbers = draw.nextNumbers;
+                    game.history = draw.nextHistory;
+                    game.checks = [];
+                    game.deadline = Date.now() + WAIT_MS;
+                } else if (id === "reset-game" && game.phase === "finished") {
+                    STORE.resetGame(game.gameId);
+                    return;
+                } else {
+                    throw new Error("この操作の受付は終了しました。");
+                }
+                STORE.writeGame(game);
+            });
+        } catch (error) {
+            if (popup && !popup.closed && popup.location.href === "about:blank") popup.close();
+            notice = error.message;
+        } finally {
+            busy = false;
+            try { render(STORE.readGame()); }
+            catch (error) { showFailure(error); }
+            scheduleRefresh();
+        }
+    }
+
+    for (const id of commandIds) byId(id).addEventListener("click", command);
+
+    STORE.subscribe(change => {
+        if (change.gameId && displayed && change.gameId !== displayed.gameId && change.type !== "game") return;
+        scheduleRefresh(change.cardId);
+    });
+    function connect() {
+        if (!releaseHost) {
+            lockError = null;
+            releaseHost = STORE.holdHost(scheduleRefresh, scheduleRefresh, error => {
+                lockError = error;
+                showFailure(error);
+            });
+        }
+        scheduleRefresh();
+    }
+    window.addEventListener("pageshow", connect);
+    window.addEventListener("pagehide", () => {
+        releaseHost?.();
+        releaseHost = null;
+        clearTimeout(deadlineTimer);
+        clearTimeout(refreshTimer);
+        refreshTimer = undefined;
+    });
+    window.addEventListener("focus", () => scheduleRefresh());
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) scheduleRefresh();
+    });
+    connect();
+})();

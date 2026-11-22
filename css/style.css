@@ -94,7 +94,7 @@ button, input { font: inherit; color: inherit; }
 .button-muted { color: var(--muted); background: var(--line); }
 
 
-/* 抽選画面。状態の見本は body の data-view で一つ選ぶ。非表示部分は読み上げ・Tab移動の対象からも外れる。 */
+/* 抽選画面。現在の状態は body の data-view で切り替える。非表示部分は読み上げ・Tab移動の対象からも外れる。 */
 .host-page[data-view="prepare"] [data-show]:not([data-show~="prepare"]),
 .host-page[data-view="draw"] [data-show]:not([data-show~="draw"]),
 .host-page[data-view="checking"] [data-show]:not([data-show~="checking"]),
@@ -557,7 +557,7 @@ button, input { font: inherit; color: inherit; }
 .card-shell h1 { font-size: 1.75rem; line-height: 1.35; }
 .card-shell h2 { font-size: 1.5rem; line-height: 1.35; }
 
-/* 一度に見える状態は1つ。body の data-card-state が将来の描画の入口になる。 */
+/* 一度に見える状態は1つ。card.js が body の data-card-state を切り替える。 */
 .card-view,
 .card-page .card-badge,
 .card-page .card-sync.state-ended,
@@ -809,3 +809,16 @@ button, input { font: inherit; color: inherit; }
   .latest-card-ball { padding-inline: 16px; }
   #card-number { width: 64px; height: 64px; }
 }
+
+/* 発行済みリンクは同じカードの復帰に使う。枚数が増えたら必要な時だけ開ける。 */
+.issued-links summary { cursor: pointer; font-weight: 700; }
+.issued-links ul {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 16px 0 0;
+  list-style: none;
+}
+.issued-links a { color: var(--pink); overflow-wrap: anywhere; }
+.host-page button:enabled { cursor: pointer; }
+.host-page button:disabled { cursor: default; color: var(--muted); background: var(--line); border-color: var(--line); }

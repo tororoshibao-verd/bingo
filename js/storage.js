@@ -1,80 +1,406 @@
-// 2番目に書くファイル。先に game.js で1回の抽選と1枚の判定を試しましょう。
-// メモ帳で学んだ「配列をJSONにして保存し、開いたときに戻す」を、複数のタブに広げます。
-// このファイルはデータの出し入れと通知を担当します。HTML要素は取得しません。
-// 成功した値や止まった理由を draw.js・card.js に渡し、各画面が対応する表示を更新します。
+// 保存とタブ間の通知をまとめる窓口。画面はこの中のキーを直接書き換えない。
+// 進行役が使い続ける鍵と、全タブが短時間だけ借りる書き込み用の鍵を分ける。
+const BingoStore = (() => {
+    const prefix = "bonbon-bingo:";
+    const pointerKey = prefix + "current";
+    let hostLease = null;
+    let writing = false;
+    let validatedProgress = null;
 
-// 手順1　ゲームとカードを区別する保存場所を決める
-// 準備時、進行役がゲームに一つの gameId を付けます。発行時、カードごとに新しい cardId を付けます。
-// 参加者の表示名は重なってよいので、誰の記録かを探すにはこの二つのIDを使います。
-// キーに bonbon-bingo: という目印を付け、紙に次の四つの保存場所と書き手を書いてみましょう。
-//
-// ・現在のゲームの案内。アプリ全体で一つ置き、進行役が現在の gameId を記録します。
-// ・進行情報。ゲームごとに一つ。進行役が状態、発行済みID、開始時の参加者と確定配置、
-//   残りのプール、順序付き履歴、確認状況、確定した当選者をまとめて保存します。
-// ・カード情報。ゲームとカードの組ごとに一つ。進行役が発行時に「未作成」の発行票を用意し、
-//   カード側が初回表示で「未登録＋配置」、参加確定で「登録済み＋同じ配置＋名前」へ更新します。
-// ・確認報告。同じ組につき一つ。そのカードが checkedDrawCount、ビンゴの有無、
-//   firstBingoAt（未成立は null）を、同じレコードとして一緒に保存します。
-//
-// 確認　同名のA・Bが同時に報告しても、書くキーは別々ですか？ 同じカードを再表示したら同じキーですか？
-// localStorage を共有する実験では、同じPC・ブラウザ・プロファイルで同じ開発サーバーを使います。
-// URLのプロトコル・ホスト・ポートを両タブで揃えましょう。別の端末は別の保存領域を持ちます。
+    function requireLocks() {
+        if (!navigator.locks) {
+            throw new Error("タブ間の操作を安全に同期できません。HTTPS または localhost で開いてください。");
+        }
+        return navigator.locks;
+    }
 
-// 手順2　まず一つの記録を保存し、読み戻す（先に手順1）
-// 試すデータは game.js で準備した残り75球と空の履歴で十分です。キーとデータを受け取ります。
-// メモ帳の JSON.stringify と JSON.parse を思い出し、文字列に変える側と元に戻す側を分けます。
-// 読むときは、キーが存在するか → JSONとして読めるか → ID・配列など必要な内容が正しいか、の順です。
-// プールと履歴に重複や欠番はありませんか？ 二つを合わせると1〜75のすべてが1回ずつになるはずです。
-// 返す結果は「読めたデータ」「該当するキーがまだない」「読み書きに失敗した理由」を区別します。
-// データが存在するはずの場面で見つからないときは復元を止めます。古いカードの再生成に進めません。
-// 保存時は関連する値を一つの進行レコードにまとめてから書きます。容量不足や利用制限を
-// try / catch で受け止めると、呼び出し元がエラーを表示し、前の確定画面を保持できます。
-// 確認　ページを開き直して同じ配列が戻りますか？ 練習用キーだけを壊した場合にも理由が分かりますか？
+    function holdHost(onAcquire, onRelease, onError) {
+        const controller = new AbortController();
+        const token = {};
+        let release;
+        // すでに進行役がいれば順番待ちする。タブが閉じるとブラウザが次のタブに鍵を渡す。
+        const released = new Promise((resolve) => { release = resolve; });
+        Promise.resolve().then(() => requireLocks().request(prefix + "host", {
+            signal: controller.signal,
+        }, async () => {
+            hostLease = token;
+            try {
+                await onAcquire();
+                await released;
+            } finally {
+                if (hostLease === token) hostLease = null;
+                onRelease?.();
+            }
+        })).catch((error) => {
+            if (error.name !== "AbortError") onError(error);
+        });
+        return () => {
+            // pagehide 中に古いタブの保留処理が進んでも、以降の保存は拒否する。
+            if (hostLease === token) hostLease = null;
+            controller.abort();
+            release();
+        };
+    }
 
-// 手順3　画面を開いたときと、ほかのタブが保存したときに読み直す（先に手順2）
-// 抽選画面は現在のゲーム・進行情報・未処理の報告を読みます。カード画面はURLのIDと
-// 現在の gameId を照合し、そのカードの情報とゲームの履歴・確定状態を読みます。
-// 初回、再読み込み、閉じていた画面への復帰は、その時点の保存内容を直接読みましょう。
-// 次に storage イベントを調べます。同一オリジンのほかのタブで保存先が変わったという合図です。
-// 関係するキーを選び、変更されたゲームの最新データを読み直して、画面側へ返します。
-// 自分で保存したタブには自分の storage イベントが来ないため、保存成功後に自分の画面も更新します。
-// 通知のたびに同じ結果を書き直すと相手との通知が続きます。読み直した回・内容が同じならそこで止めます。
-// 確認　Aで1回保存するとBでも同じ確定番号になるか、Bを閉じて数回引いても再表示で追いつくかを試します。
+    async function withWrite(callback) {
+        return requireLocks().request(prefix + "write", async () => {
+            writing = true;
+            try {
+                // 読む → 最新状態を確認する → 保存する。待ち時間や画面操作は鍵の外で行う。
+                return callback();
+            } finally {
+                writing = false;
+            }
+        });
+    }
 
-// 手順4　二つの抽選画面が同時に進行役になるのを防ぐ（複数タブでの書き込みに進む前に）
-// ロックは「一人だけが使える鍵」です。たとえば同一オリジンのタブで共有できる Web Locks API を調べ、
-// 進行役のタブだけが取得・保持する鍵を考えます。取れないタブは状態の表示だけを担当します。
-// localStorage の値を読んで「空いている」と判断してから書くまでに、別タブも同じ値を読めます。
-// 競合する操作は短い共通の鍵も使い、最新の記録を読むところから条件確認・保存までを一続きにします。
-// 進行役を決める鍵と短い書き込み用の鍵には別の名前を付けます。カードの応答を待つ間は
-// 短い鍵を解放し、カードが報告を書けるようにします。保存直前に現在のID・状態・書き手を再確認します。
-// 抽選画面のタブを閉じたら別タブが操作権を取り直し、保存済みの進行から再開できるようにします。
-// 鍵が使えない場合には、操作を止めて理由を返します。確認は二つのタブで同時に行ってください。
-// 一方だけが抽選でき、そのタブを閉じた後はもう一方が同じ続きから引けますか？
+    function requireWriter(hostOnly = false) {
+        if (!writing) throw new Error("書き込み用の鍵を取得してください。");
+        if (hostOnly && !hostLease) throw new Error("このタブには進行役の操作権がありません。");
+    }
 
-// 手順5　発行・登録・報告がぶつかる場合を試す（先に手順2〜4）
-// 最初のURL表示では、短い鍵の中で現在のID・発行記録・カード情報を読み直します。
-// 準備中で「未作成」の発行票があるときだけ、カード側が配置を生成して未登録状態で保存します。
-// 未登録のまま再表示しても保存済みの配置を復元します。発行票・配置の欠損や旧IDはエラーとして止めます。
-// 登録時も開始時も同じ短い鍵を使います。登録時は受付中か、発行済みか、未登録の配置が正常かを
-// 再確認し、その配置のまま表示名と登録確定状態を一緒に保存します。
-// 開始時は登録済みカードとその配置を確定して保存し、以後の照合対象にします。未登録の発行枠は除きます。
-// 同じURLを開いた複数タブでは、最初に保存できた配置と名前を再利用します。
-// 判定を報告するときも、同じカードの最新報告を読み、古い回の遅延書き込みで確認回数を戻さないようにします。
-// 待機後の代替照合は進行役の進行レコードに記録し、カード本人の報告用キーはカード自身が使います。
-// 最終確認中は最後の対象回の報告を受け付けます。終了確定後は読み取りに切り替えます。
-// 確認　登録と開始を同時に試して、参加できたカードと開始時名簿が一致しますか？
-// 別々の2枚が同時にビンゴしたら両方の報告が残るか、同じカードから第12回の後に第11回が届いても
-// 保存済みの第12回と判定結果が保たれるかも確認してください。
+    function read(key, isProgress = false) {
+        let raw;
+        try {
+            raw = localStorage.getItem(key);
+        } catch {
+            throw new Error("ブラウザの設定で保存データを読み込めません。");
+        }
+        if (raw === null) return null;
+        let record;
+        try {
+            record = JSON.parse(raw);
+            if (!record || typeof record !== "object" || Array.isArray(record)) throw new Error();
+        } catch {
+            throw new Error("保存データが壊れています。内容を読み込めません。");
+        }
+        // 同じJSONを何度読み直しても、全回分の整合確認は1回で足りる。
+        // 画面に渡すオブジェクト自体は毎回新しく読み戻すので、未保存の編集は混ざらない。
+        if (isProgress && validatedProgress !== raw) {
+            validateGame(record);
+            validatedProgress = raw;
+        }
+        return record;
+    }
 
-// 手順6　終了後、旧ゲームの記録だけを片付ける（最後に draw.js のリセットと接続）
-// ゲーム終了時は結果を残し、進行役がリセットを選んだときに削除します。対象はそのゲームのIDで絞ります。
-// メモ帳で使った clear は保存領域全体に作用します。アプリの接頭辞と区切りを含む旧 gameId を
-// 照合して対象キーを先に集め、選んだキーだけを removeItem で消す方法を考えましょう。
-// 複数キーの変更はまとめて成功するとは限りません。短い鍵の中で新ゲームの初期状態を用意し、
-// その保存に成功してから現在のIDを切り替えます。削除対象の旧IDも引き継ぎ、途中でタブを閉じても
-// 次の起動で残りを片付けられる順番にします。すべて終わるまでリセット完了とは表示しません。
-// 旧カードから届く書き込みは現在のIDと照合して止めます。古いURLには無効になったことを伝えます。
-// 確認　旧カードを開いたままリセットし、旧ID・登録名・配置・履歴・報告・当選が戻らないか。
-// 新ゲームの記録と、同じオリジンにあるメモ帳など別アプリのキーは残っていますか？
-// 保存と読み戻しを試せたら draw.js の準備・発行と card.js の登録に接続し、手順4以降を実際の2タブで検証します。
+    function save(key, value) {
+        try {
+            localStorage.setItem(key, JSON.stringify(value));
+        } catch (error) {
+            if (error.name === "QuotaExceededError") {
+                throw new Error("ブラウザの保存容量が不足しています。空き容量を確認して再試行してください。");
+            }
+            throw new Error("データを保存できません。ブラウザの保存設定を確認してください。");
+        }
+    }
+
+    function validId(id) {
+        return typeof id === "string" && /^[a-zA-Z0-9_-]+$/.test(id);
+    }
+
+    function gamePrefix(gameId) {
+        if (!validId(gameId)) throw new Error("ゲームIDが正しくありません。");
+        return prefix + "game:" + gameId + ":";
+    }
+
+    function cardKey(type, gameId, cardId) {
+        if (!validId(cardId)) throw new Error("カードIDが正しくありません。");
+        return gamePrefix(gameId) + type + ":" + cardId;
+    }
+
+    function readPointer() {
+        const pointer = read(pointerKey);
+        if (!pointer) return null;
+        if (!validId(pointer.gameId) || (pointer.preparing !== undefined && pointer.preparing !== true)
+            || (pointer.previous != null && (!pointer.preparing || !validId(pointer.previous)
+                || pointer.previous === pointer.gameId))) {
+            throw new Error("現在のゲームを示す保存情報が壊れています。");
+        }
+        return pointer;
+    }
+
+    function validateGame(game) {
+        if (!validId(game.gameId) || !["prepare", "playing", "final", "finished"].includes(game.phase)
+            || !Array.isArray(game.issuedIds) || !Array.isArray(game.participants) || !Array.isArray(game.checks)
+            || !Array.isArray(game.winners) || !Array.isArray(game.rounds)
+            || !Number.isSafeInteger(game.revision) || game.revision < 0) {
+            throw new Error("ゲームの進行情報が壊れています。");
+        }
+        const active = game.phase === "playing" || game.phase === "final";
+        if (active ? !Number.isSafeInteger(game.deadline) || game.deadline <= 0 : game.deadline !== null) {
+            throw new Error("確認待ちの期限がゲームの進行状態と一致しません。");
+        }
+        if (!Array.isArray(game.numbers) || !Array.isArray(game.history)
+            || validateBallList([...game.numbers, ...game.history], "保存した球").size !== BINGO_BALL_COUNT) {
+            throw new Error("保存した残り球と抽選履歴を合わせても75球になりません。");
+        }
+        const issued = new Set(game.issuedIds);
+        const players = new Set();
+        if (game.phase === "prepare" && (game.history.length || game.participants.length || game.rounds.length
+            || game.checks.length || game.winners.length)) throw new Error("準備中のゲームに抽選後の記録があります。");
+        if (issued.size !== game.issuedIds.length || !game.issuedIds.every(validId)) {
+            throw new Error("保存した発行済みカードIDが壊れています。");
+        }
+        for (const card of game.participants) {
+            if (card?.gameId !== game.gameId || !issued.has(card.cardId) || players.has(card.cardId)) {
+                throw new Error("参加カードの名簿が壊れています。");
+            }
+            players.add(card.cardId);
+        }
+        const checked = new Set();
+        for (const check of game.checks) {
+            if (check?.gameId !== game.gameId || !players.has(check.cardId) || checked.has(check.cardId)
+                || !["unconfirmed", "card-confirmed", "fallback-confirmed"].includes(check.status)) {
+                throw new Error("保存したカードの確認状況が壊れています。");
+            }
+            if (check.status !== "unconfirmed") {
+                validateReport(check, game.gameId, check.cardId);
+                if (check.checkedDrawCount !== game.history.length || typeof check.displayName !== "string") {
+                    throw new Error("カードの確認回数または表示名が正しくありません。");
+                }
+            } else if (typeof check.reason !== "string" || game.phase === "finished") {
+                throw new Error("保存した未確認カードの情報が正しくありません。");
+            }
+            checked.add(check.cardId);
+        }
+        // 全員を照合するたびに第0回から順に1件ずつ保存する。最新回だけは確認待ちの場合がある。
+        if (game.rounds.length < game.history.length || game.rounds.length > game.history.length + 1
+            || (game.phase === "finished" && (checked.size !== players.size || game.rounds.length !== game.history.length + 1))) {
+            throw new Error("完了した抽選回の確認記録が足りません。");
+        }
+        for (const [index, row] of game.rounds.entries()) {
+            if (row?.round !== index || !Array.isArray(row.reported) || !Array.isArray(row.fallback)) {
+                throw new Error("抽選回ごとの確認記録が壊れています。");
+            }
+            const ids = [...row.reported, ...row.fallback];
+            if (ids.length !== players.size || new Set(ids).size !== players.size || !ids.every(id => players.has(id))) {
+                throw new Error("抽選回ごとの確認記録が参加カードと一致しません。");
+            }
+        }
+        let previousRound = 0;
+        const winners = new Set();
+        for (const group of game.winners) {
+            if (!Number.isInteger(group?.firstBingoAt) || group.firstBingoAt <= previousRound
+                || group.firstBingoAt > game.history.length || !Array.isArray(group.cards)
+                || group.cards.length === 0) {
+                throw new Error("保存した当選者一覧が壊れています。");
+            }
+            for (const card of group.cards) {
+                if (card?.gameId !== game.gameId || !players.has(card.cardId) || winners.has(card.cardId)
+                    || typeof card.displayName !== "string") throw new Error("当選者の登録情報が壊れています。");
+                winners.add(card.cardId);
+            }
+            previousRound = group.firstBingoAt;
+        }
+    }
+
+    function readGame() {
+        const pointer = readPointer();
+        if (!pointer) return null;
+        if (pointer.preparing) throw new Error("ゲームの切り替え中です。進行役の画面から再開してください。");
+        const game = read(gamePrefix(pointer.gameId) + "progress", true);
+        if (game?.gameId !== pointer.gameId) throw new Error("現在のゲームの進行情報が見つかりません。");
+        return game;
+    }
+
+    function currentGame(gameId) {
+        const game = readGame();
+        if (game?.gameId !== gameId) throw new Error("ゲームが切り替わりました。画面を確認してください。");
+        return game;
+    }
+
+    // リセットは複数キーにまたがる。先に切り替え中の印を記録し、途中で閉じても次の進行役が続きを行う。
+    function finishPreparation(pointer) {
+        const key = gamePrefix(pointer.gameId) + "progress";
+        let game = read(key);
+        if (!game) {
+            game = {
+                gameId: pointer.gameId, phase: "prepare", revision: 0,
+                issuedIds: [], participants: [], numbers: createNumberPool(), history: [],
+                checks: [], winners: [], rounds: [], deadline: null,
+            };
+            try {
+                save(key, game);
+            } catch (error) {
+                // 新しい75球を保存できなければ旧ゲームを案内し続ける。旧データの削除はまだ行っていない。
+                if (pointer.previous) save(pointerKey, { gameId: pointer.previous });
+                else localStorage.removeItem(pointerKey);
+                throw error;
+            }
+        }
+        validateGame(game);
+        if (game.gameId !== pointer.gameId || game.phase !== "prepare") {
+            throw new Error("切り替え先ゲームの保存情報が正しくありません。");
+        }
+        if (pointer.previous) {
+            const obsolete = gamePrefix(pointer.previous);
+            // 削除するとキーの並びが変わる場合がある。旧ゲームのキーを集めてから消す。
+            const oldKeys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+                const oldKey = localStorage.key(i);
+                if (oldKey?.startsWith(obsolete)) oldKeys.push(oldKey);
+            }
+            for (const oldKey of oldKeys) localStorage.removeItem(oldKey);
+        }
+        save(pointerKey, { gameId: pointer.gameId });
+        return game;
+    }
+
+    function prepareGame(previous) {
+        const pointer = { gameId: crypto.randomUUID(), preparing: true, previous };
+        save(pointerKey, pointer);
+        return finishPreparation(pointer);
+    }
+
+    function initialGame() {
+        requireWriter(true);
+        const pointer = readPointer();
+        if (pointer?.preparing) return finishPreparation(pointer);
+        if (pointer) return readGame();
+        // 開催中のゲームへの案内だけ消えた場合は、新規として上書きしない。
+        for (let i = 0; i < localStorage.length; i++) {
+            if (localStorage.key(i)?.startsWith(prefix + "game:")) {
+                throw new Error("保存済みゲームがありますが、現在のゲームIDが見つかりません。");
+            }
+        }
+        return prepareGame(null);
+    }
+
+    function resetGame(gameId) {
+        requireWriter(true);
+        if (currentGame(gameId).phase !== "finished") throw new Error("ゲーム終了後にリセットできます。");
+        return prepareGame(gameId);
+    }
+
+    function writeGame(game) {
+        requireWriter(true);
+        const previous = currentGame(game.gameId);
+        if (previous.revision !== game.revision || previous.phase === "finished") {
+            throw new Error("進行情報が更新されました。最新の状態を確認してください。");
+        }
+        validateGame(game);
+        const next = { ...game, revision: game.revision + 1 };
+        save(gamePrefix(game.gameId) + "progress", next);
+        game.revision = next.revision;
+        return game;
+    }
+
+    function issueCard(game) {
+        requireWriter(true);
+        const current = currentGame(game.gameId);
+        if (current.phase !== "prepare" || current.revision !== game.revision) {
+            throw new Error("カードを発行できません。最新の受付状態を確認してください。");
+        }
+        let sequence = current.issuedIds.length + 1;
+        let cardId;
+        let key;
+        do {
+            cardId = "CARD-" + String(sequence).padStart(3, "0");
+            key = cardKey("card", game.gameId, cardId);
+            sequence++;
+            // 前回のタブが発行票を書いた直後に閉じても、残った保存先を上書きしない。
+        } while (current.issuedIds.includes(cardId) || read(key) !== null);
+        // 先に発行票を作り、発行済み名簿の保存まで成功してからURLを渡す。
+        save(key, { gameId: game.gameId, cardId, cardRows: null, registered: false, displayName: "" });
+        try {
+            writeGame({ ...current, issuedIds: [...current.issuedIds, cardId] });
+        } catch (error) {
+            localStorage.removeItem(key);
+            throw error;
+        }
+        return cardId;
+    }
+
+    function readCard(gameId, cardId) {
+        const card = read(cardKey("card", gameId, cardId));
+        if (!card) return null;
+        if (card.gameId !== gameId || card.cardId !== cardId || typeof card.registered !== "boolean"
+            || typeof card.displayName !== "string" || (card.registered && !card.cardRows)) {
+            throw new Error("カードの登録情報が壊れています。");
+        }
+        if (card.cardRows !== null) validateCard(card.cardRows);
+        return card;
+    }
+
+    function writeCard(card) {
+        requireWriter();
+        const game = currentGame(card.gameId);
+        if (game.phase !== "prepare" || !game.issuedIds.includes(card.cardId)) {
+            throw new Error("このカードの参加受付は終了しています。");
+        }
+        const saved = readCard(card.gameId, card.cardId);
+        if (!saved) throw new Error("カードの発行票が見つかりません。");
+        validateCard(card.cardRows);
+        if (saved.registered || (saved.cardRows !== null && JSON.stringify(saved.cardRows) !== JSON.stringify(card.cardRows))) {
+            throw new Error("確定したカードの名前や配置は変更できません。");
+        }
+        if (typeof card.registered !== "boolean" || typeof card.displayName !== "string"
+            || (card.registered && !card.displayName.trim())) throw new Error("カードの登録情報が正しくありません。");
+        save(cardKey("card", card.gameId, card.cardId), card);
+    }
+
+    function validateReport(report, gameId, cardId) {
+        const round = report.checkedDrawCount;
+        const first = report.firstBingoAt;
+        const validResult = report.hasBingo === true ? Number.isInteger(first) && first > 0 && first <= round
+            : report.hasBingo === false && first === null;
+        if (report.gameId !== gameId || report.cardId !== cardId || !Number.isInteger(round)
+            || round < 0 || round > BINGO_BALL_COUNT || !validResult) {
+            throw new Error("カードの確認報告が壊れています。");
+        }
+    }
+
+    function readReport(gameId, cardId) {
+        const report = read(cardKey("report", gameId, cardId));
+        if (report) validateReport(report, gameId, cardId);
+        return report;
+    }
+
+    function writeReport(report) {
+        requireWriter();
+        const { gameId, cardId } = report;
+        const game = currentGame(gameId);
+        validateReport(report, gameId, cardId);
+        if (!["playing", "final"].includes(game.phase) || report.checkedDrawCount !== game.history.length
+            || !game.participants.some(card => card.cardId === cardId)) {
+            throw new Error("受付中のゲーム・参加カード・最新の抽選回を確認してください。");
+        }
+        const previous = readReport(gameId, cardId);
+        if (previous && previous.checkedDrawCount >= report.checkedDrawCount) {
+            if (previous.checkedDrawCount === report.checkedDrawCount && previous.hasBingo === report.hasBingo
+                && previous.firstBingoAt === report.firstBingoAt) return;
+            throw new Error("保存済みの確認報告と一致しません。");
+        }
+        // 確認回数と当選結果を同じ1レコードにする。別カードの報告は独立したキーに残る。
+        save(cardKey("report", gameId, cardId), report);
+    }
+
+    function subscribe(callback) {
+        function onChange(event) {
+            if (event.storageArea !== localStorage) return;
+            if (event.key === null || event.key === pointerKey) {
+                callback({ type: event.key === null ? "clear" : "game", gameId: null, cardId: null });
+                return;
+            }
+            const start = prefix + "game:";
+            if (!event.key.startsWith(start)) return;
+            const [gameId, kind, cardId] = event.key.slice(start.length).split(":");
+            const type = kind === "progress" ? "game" : kind;
+            if (["card", "report", "game"].includes(type)) callback({ type, gameId, cardId: cardId || null });
+        }
+        window.addEventListener("storage", onChange);
+        return () => window.removeEventListener("storage", onChange);
+    }
+
+    function cardUrl(gameId, cardId) {
+        const url = new URL("card.html", location.href);
+        url.search = new URLSearchParams({ gameId, cardId });
+        return url.href;
+    }
+
+    return {
+        withWrite, holdHost, hasHost: () => hostLease !== null,
+        readGame, initialGame, writeGame, resetGame, issueCard, cardUrl,
+        readCard, writeCard, readReport, writeReport, subscribe,
+    };
+})();
