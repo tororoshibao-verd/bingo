@@ -6,21 +6,89 @@
 // 呼び出し元に任せると、抽選画面とカード画面で同じ判定を使えます。
 
 // 手順1　1〜75を for で配列に用意する
-// 新しいゲームの準備に使う「まだ出ていない番号の箱」を作ります。
-// 空の配列を新しく用意し、1から75まで繰り返して、その回の数を1個ずつ加えてみましょう。
-// 受け渡すものは番号75個の配列。確認する場所はコンソールだけで十分です。
-// 先頭は1、末尾は75、長さは75ですか？ もう一度準備しても長さは75のままですか？
-// 最初の要素の位置は0ですが、最初の球の「番号」は1です。
+let numbers = [];
+for (let i = 1; i <= 75; i++) {
+  numbers.push(i);
+}
 
 // 手順2　1回分の抽選を考える（先に手順1）
-// 「次の番号を引く」とき、残りの番号と、これまでの順序付き履歴を受け取ります。
-// 学習した抽選アプリで乱数の範囲に使った配列の長さは、1回引くとどう変わりましたか？
-// 残りが空なら取り出す前に止めます。値を渡せるときだけ、残りの中の位置を均等に選びます。
-// 配列のコピーから splice で1個取り出し、取り出した数字を履歴のコピーの末尾に加えます。
-// splice の戻り値は配列です。次の処理に渡したいものが「数字1個」か考えてください。
-// 返すものは今回の番号、新しい残りの配列、新しい履歴。保存が成功するまでは前の配列も残します。
-// 確認　最初の1回なら残り74個・履歴1個。75回後には履歴が1〜75を重複なく含み、
-// 76回目を試しても空のプールと履歴は変わりません。
+
+let drawHistory = []; // 選ばれた番号の履歴を保存する配列
+function drawOne(numbers, drawHistory) {
+    if (numbers.length === 0) {
+        console.log("すべて抽選済み");
+    } else {
+        const nextNumbers = numbers.slice(); // 残りの番号のコピーを作る
+        const r = Math.floor(Math.random() * numbers.length); // 乱数で1個の位置を決める
+        const selectedNumbers = nextNumbers.splice(r, 1); // 選ばれた番号の履歴を保存する配列
+        const nextHistory = drawHistory.slice(); // 履歴のコピーを作る
+        nextHistory.push(selectedNumbers[0]); // 履歴に追加
+        return {
+            pickedNumber: selectedNumbers[0], nextNumbers, nextHistory // 選ばれた番号
+        };
+    }
+}
+// 確認用。1周につき1球を引き、76回目に球が出ないことまで試す。
+for (let attempt = 1; attempt <= 76; attempt++) {
+    const result = drawOne(numbers, drawHistory);
+
+    // 球が空のときは結果が返らないので、今の残り球と履歴を保って終了する。
+    if (result === undefined) {
+        // console.log(`${attempt}回目　残り${numbers.length}球・履歴${drawHistory.length}件`);
+        break;
+    }
+
+    // 今回の結果を、次の周で使う残り球と履歴にする。
+    numbers = result.nextNumbers;
+    drawHistory = result.nextHistory;
+    // console.log(`${attempt}回目　${result.pickedNumber}番・残り${numbers.length}球・履歴${drawHistory.length}件`);
+}
+
+// 手順3
+function createColumn(start, end, count) {
+    let candidates = [];
+    for (let num = start; num <= end; num++) {
+        candidates.push(num);
+    };
+
+    let column = [];
+    for (let i = 0; i < count; i++) {
+        const r = Math.floor(Math.random() * candidates.length);
+        const selectedNumbers = candidates.splice(r, 1);
+        column.push(selectedNumbers[0]);
+    };
+    return column;
+}
+
+function createCard() {
+    const bColumn = createColumn(1, 15, 5);
+    const iColumn = createColumn(16, 30, 5);
+    const nColumn = createColumn(31, 45, 4);
+    nColumn.splice(2, 0, "FREE");
+    const gColumn = createColumn(46, 60, 5);
+    const oColumn = createColumn(61, 75, 5);
+
+    const firstRow = [bColumn[0], iColumn[0], nColumn[0], gColumn[0], oColumn[0]];
+    // console.log(firstRow);
+    const secondRow = [bColumn[1], iColumn[1], nColumn[1], gColumn[1], oColumn[1]];
+    // console.log(secondRow);
+    const thirdRow = [bColumn[2], iColumn[2], nColumn[2], gColumn[2], oColumn[2]];
+    // console.log(thirdRow);
+    const fourthRow = [bColumn[3], iColumn[3], nColumn[3], gColumn[3], oColumn[3]];
+    // console.log(fourthRow);
+    const fifthRow = [bColumn[4], iColumn[4], nColumn[4], gColumn[4], oColumn[4]];
+    // console.log(fifthRow);
+
+    const cardRows = [firstRow, secondRow, thirdRow, fourthRow, fifthRow]; 
+    return cardRows;
+}
+const firstCard = createCard();
+console.table(firstCard);
+const firstCardBefore = JSON.stringify(firstCard);
+const secondCard = createCard();
+
+console.table(secondCard);
+console.log("1枚目の配置はそのまま？", JSON.stringify(firstCard) === firstCardBefore);
 
 // 手順3　初回発行用に、1枚分のカードの配置を作る（先に手順2の「1個選んで除く」考え方）
 // 席決めアプリの「席の位置」と「座る人」を、ここでは「マスの位置」と「入る番号」に置き換えます。
