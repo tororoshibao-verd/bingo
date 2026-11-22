@@ -40,6 +40,8 @@
 
     <!-- 保存失敗、権限不足、照合不能など。JSで理由を #host-message に表示して該当操作を止める。 -->
     <p id="host-message" class="host-message" role="alert" hidden></p>
+    <!-- 最新の確定グループが変わると、抽選回と表示名を一度まとめて読み上げる。 -->
+    <p id="winner-announcement" class="sr-only" role="status" aria-atomic="true"></p>
 
     <noscript><p class="host-message">ブラウザでJavaScriptを有効にしてから開いてください。</p></noscript>
 
@@ -47,10 +49,14 @@
     <div class="host-layout">
       <div class="host-column">
         <!-- 最新の確定番号と抽選操作。画像は背景だけ。ゲーム開始直後は番号を待機表示にする。 -->
-        <section class="host-stage panel" data-show="draw" aria-label="抽選">
-          <!-- 番号が確定したら .js-latest-letter と .js-latest-number を更新する。初回は未抽選。 -->
+        <section class="host-stage panel" data-show="draw checking" aria-label="抽選">
+          <!-- 演出用の #draw-preview を確定番号の位置に重ねる。読み上げるのは保存できた番号だけ。 -->
           <div class="host-number-stage">
-            <span class="badge host-ball-label">最新の番号</span>
+            <span id="draw-label" class="badge host-ball-label">最新の番号</span>
+            <div id="draw-preview" class="host-current-ball number" aria-hidden="true" hidden>
+              <span id="preview-letter"></span>
+              <strong id="preview-number"></strong>
+            </div>
             <div class="host-current-ball number" aria-live="polite" aria-atomic="true">
               <span class="js-latest-letter"></span>
               <strong class="js-latest-number">―</strong>
@@ -132,7 +138,7 @@
         </section>
 
         <!-- 終了時の確定者。#result-winners も抽選中の #winner-list と同じ確定記録から描き直す。 -->
-        <section class="panel host-panel" data-show="finished">
+        <section class="panel host-panel host-results" data-show="finished">
           <h2>確定した当選者</h2>
           <p id="result-empty">当選したカードはありません。</p>
           <ol id="result-winners" class="host-winners"></ol>
@@ -161,7 +167,7 @@
           <button class="button button-primary" type="button" id="start-game" disabled>参加を締め切って開始</button>
         </section>
 
-        <!-- #winner-list は進行役が照合・確定した結果専用。同じ回の人をまとめ、未入力名にはカードIDを表示する。 -->
+        <!-- #winner-list は進行役が照合・確定した結果専用。最新回の全員を大きく見せ、同名のカードにはIDも添える。 -->
         <section class="panel host-panel host-awards" data-show="draw checking final">
           <div class="host-panel-heading"><h2>当選者</h2><img src="images/bow.svg" width="52" height="34" alt=""></div>
           <p id="winners-empty">まだ当選者はいません。</p>
@@ -179,9 +185,9 @@
           </dl>
         </section>
 
-        <!-- 照合中と終了時にも対象回と確定番号を見せる。最新の番号と回数は抽選欄と同じ保存データを使う。 -->
-        <section class="panel host-panel" data-show="checking final finished">
-          <h2><span data-show="checking">今回の抽選番号</span><span data-show="final finished">最後の抽選番号</span></h2>
+        <!-- 最終確認と終了時も、保存済みの最後の抽選回と番号を見せる。 -->
+        <section class="panel host-panel" data-show="final finished">
+          <h2>最後の抽選番号</h2>
           <div class="host-panel-heading host-last-number">
             <strong class="number"><small class="js-latest-letter"></small> <span class="js-latest-number">―</span></strong>
             <span class="badge host-people">第<span class="js-round">0</span>回</span>
@@ -191,7 +197,6 @@
         <section class="panel host-panel" data-show="checking">
           <h2>次の抽選</h2>
           <p>応答がないカードは進行役が自動で照合します。全<span class="js-player-count">0</span>枚の確認が済むと、次の番号を引けます。</p>
-          <button class="button button-muted" type="button" disabled>確認中 · 次の番号を引く</button>
         </section>
         <!-- #end-game は最後の抽選回を固定して最終確認へ進む。照合待ちに押した場合も、その回の確認を引き継ぐ。 -->
         <button class="button button-secondary host-finish" type="button" data-show="draw checking" id="end-game" disabled>ゲームを終了する</button>

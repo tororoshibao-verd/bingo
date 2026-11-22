@@ -34,6 +34,13 @@
       <noscript>カードの表示・参加登録にはJavaScriptを有効にしてください。</noscript>
       <!-- 登録済みカードの表示。#card-play はゲーム中と終了後に共用し、終了後も最後の盤面を確認できる。 -->
       <div id="card-play" class="card-view">
+        <!-- 自分の当選が確定すると #card-result を開き、最初にそろった回を表示する。盤面も続けて確認できる。 -->
+        <div role="status" aria-atomic="true">
+          <p id="card-result" class="bingo-banner" hidden>
+            <strong class="bingo-word number">BINGO</strong>
+            <span id="card-result-round"></span>
+          </p>
+        </div>
         <!-- 最新の確定番号を示す。JSは保存された履歴の末尾から #card-letter・#card-number・#card-round を更新する。 -->
         <section class="latest-card-ball" aria-labelledby="latest-heading">
           <div>
@@ -71,10 +78,9 @@
           </div>
         </section>
 
-        <!-- #card-sync は自分が反映した回を示す。自分の当選が確定した時だけ #card-result の hidden を外して表示する。 -->
+        <!-- #card-sync は自分が反映した回を示す。終了時は #card-end に切り替える。 -->
         <p id="card-sync" class="card-sync state-playing" role="status"></p>
         <p id="card-end" class="card-sync state-ended">ゲームは終了しました</p>
-        <p id="card-result" class="card-sync" role="status" hidden></p>
       </div>
 
       <!-- 初回登録。#card-entry は開始前の発行済み・未登録カードだけに見せる。 -->
@@ -98,11 +104,13 @@
             <span id="entry-limit">任意・10文字まで</span>
           </div>
           <input id="entry-name" type="text" placeholder="例）ゆい" aria-describedby="entry-limit entry-hint entry-feedback">
-          <p id="entry-hint" class="entry-hint">空欄なら <span id="fallback-id"></span> で参加します。</p>
-          <p class="entry-hint">登録後の名前変更はできません。</p>
+          <p id="entry-hint" class="entry-hint">登録後の名前変更はできません。</p>
           <p id="entry-feedback" class="entry-feedback" role="alert" hidden></p>
-          <!-- #register-card は初回登録の確定ボタン。card.js で保存に成功したときだけ盤面へ進む。 -->
-          <button id="register-card" class="button button-primary" type="submit">このカードで参加する</button>
+          <!-- 名前があるときは #register-card で参加。空欄のときは #register-card-id を選ぶと表示名がカードIDになる。 -->
+          <div class="entry-actions">
+            <button id="register-card" class="button button-primary" type="submit" disabled>このカードで参加する</button>
+            <button id="register-card-id" class="button button-secondary" type="button" disabled><span>IDで始める（<span id="fallback-id"></span>）</span></button>
+          </div>
         </form>
       </section>
 

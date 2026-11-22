@@ -7,6 +7,9 @@
     const board = byId("card-grid").tBodies[0];
     const nameInput = byId("entry-name");
     const entryFeedback = byId("entry-feedback");
+    const nameButton = byId("register-card");
+    const idButton = byId("register-card-id");
+    let registering = false;
     let displayedLayout = "";
 
     // 絵文字や結合文字も、参加者に見える一文字として数える。
@@ -15,13 +18,8 @@
 
     // 1. 登録確定では、同じ排他区間で読み直した配置に名前を付ける。
     // 失敗時は入力を残す。先に別タブで登録された場合、この処理には入らない。
-    function register(card, input) {
-        const name = input.trim();
-        const characters = segmenter ? segmenter.segment(name) : name;
-        if (Array.from(characters).length > 10) {
-            return { view: "register", feedback: "表示名は10文字以内で入力してください。", invalid: true };
-        }
-        const registered = { ...card, displayName: name || cardId, registered: true };
+    function register(card, displayName) {
+        const registered = { ...card, displayName, registered: true };
         try {
             BingoStore.writeCard(registered);
         } catch (error) {
@@ -51,7 +49,7 @@
 
     // 3. 発行、登録、開始、リセットがぶつかっても判断がずれないように、呼び出し側で短い鍵を取る。
     // 配置を生成できるのは、準備中の「配置がまだない発行票」を最初に開いた一度だけ。
-    function loadCard(input) {
+    function loadCard(displayName) {
         const game = BingoStore.readGame();
         if (!game) throw new Error("ゲームが見つかりません。進行役から発行されたURLを開いてください。");
         if (game.gameId !== gameId) return { view: "reset" };
@@ -65,8 +63,8 @@
                 BingoStore.writeCard(card);
             }
             if (!card.registered) {
-                if (input === undefined) return { view: "register" };
-                const result = register(card, input);
+                if (displayName === undefined) return { view: "register" };
+                const result = register(card, displayName);
                 return { ...result, game };
             }
         } else {
@@ -147,7 +145,7 @@
 
         const win = game.winners.find((group) => group.cards.some((entry) =>
             entry.gameId === gameId && entry.cardId === cardId));
-        setText("card-result", win ? `第${win.firstBingoAt}回でビンゴ！ 当選が確定しました。` : "");
+        setText("card-result-round", win ? `第${win.firstBingoAt}回で当選しました！` : "");
         byId("card-result").hidden = !win;
     }
 
@@ -157,12 +155,21 @@
         nameInput.setAttribute("aria-invalid", String(invalid));
     }
 
+    function updateEntryButtons() {
+        const hasName = nameInput.value.trim() !== "";
+        const available = document.body.dataset.cardState === "register" && !registering;
+        nameButton.disabled = !available || !hasName;
+        idButton.hidden = hasName;
+        idButton.disabled = !available || hasName;
+    }
+
     function render(state) {
         document.body.dataset.cardState = state.view;
+        updateEntryButtons();
         if (state.view === "register") {
             setText("entry-id", cardId);
             setText("fallback-id", cardId);
-            if (state.feedback) showFeedback(state.feedback, state.invalid);
+            if (state.feedback) showFeedback(state.feedback);
             return;
         }
 
@@ -177,17 +184,17 @@
         // リセット・締切・エラーの画面に、前のカードのIDや数字、当選メッセージを持ち越さない。
         displayedLayout = "";
         board.replaceChildren();
-        for (const id of ["card-id", "card-name", "card-letter", "card-number", "card-round", "card-result", "card-sync"]) {
+        for (const id of ["card-id", "card-name", "card-letter", "card-number", "card-round", "card-result-round", "card-sync"]) {
             setText(id, "");
         }
         byId("card-result").hidden = true;
         if (state.view === "error") setText("card-error-reason", state.reason);
     }
 
-    async function update(input) {
+    async function update(displayName) {
         try {
             if (!gameId || !cardId) throw new Error("進行役から発行されたカードのURLを開いてください。");
-            const state = await BingoStore.withWrite(() => loadCard(input));
+            const state = await BingoStore.withWrite(() => loadCard(displayName));
             render(state);
         } catch (error) {
             render({ view: "error", reason: error.message });
@@ -211,18 +218,38 @@
         }
     }
 
-    byId("entry-form").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const button = byId("register-card");
-        if (button.disabled) return;
-        button.disabled = true;
+    // 両方の入口が同じ保存経路を使う。書き込み中の連打や他タブと同時の登録にも対応する。
+    async function submitRegistration(displayName) {
+        if (registering || document.body.dataset.cardState !== "register") return;
+        registering = true;
+        updateEntryButtons();
         try {
-            await update(nameInput.value);
+            await update(displayName);
         } finally {
-            button.disabled = false;
+            registering = false;
+            updateEntryButtons();
         }
+    }
+
+    // Enter は名前での登録にだけ使う。空欄なら、別のボタンで明示的にIDを選んでもらう。
+    byId("entry-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const name = nameInput.value.trim();
+        if (!name) return;
+        const characters = segmenter ? segmenter.segment(name) : name;
+        if (Array.from(characters).length > 10) {
+            showFeedback("表示名は10文字以内で入力してください。", true);
+            return;
+        }
+        submitRegistration(name);
     });
-    nameInput.addEventListener("input", () => showFeedback());
+    idButton.addEventListener("click", () => {
+        if (!nameInput.value.trim()) submitRegistration(cardId);
+    });
+    nameInput.addEventListener("input", () => {
+        showFeedback();
+        updateEntryButtons();
+    });
     byId("retry-card").addEventListener("click", refresh);
     BingoStore.subscribe((change) => {
         if (change.type === "clear" || (change.type === "game" && (!change.gameId || change.gameId === gameId))

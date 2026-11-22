@@ -2,12 +2,15 @@
 (() => {
     const STORE = BingoStore;
     const WAIT_MS = 2000; // 抽選を保存してから、未応答カードを代替照合するまでの時間。
+    const ROLL_STEPS = 12;
+    const ROLL_STEP_MS = 80;
     const byId = id => document.getElementById(id);
     const commandIds = ["issue-card", "start-game", "draw-next", "end-game", "reset-game"];
     let displayed = null;
     let releaseHost = null;
     let lockError = null;
     let busy = false;
+    let cancelShuffle;
     let notice = "";
     let deadlineTimer;
     let refreshTimer;
@@ -30,6 +33,7 @@
     }
 
     function showFailure(error) {
+        cancelShuffle?.();
         clearTimeout(deadlineTimer);
         disableCommands();
         message(error.message || "保存内容を読み込めませんでした。ページを再読み込みしてください。");
@@ -53,6 +57,43 @@
 
     function letter(number) {
         return number ? "BINGO"[Math.floor((number - 1) / 15)] : "";
+    }
+
+    // 演出専用の候補からランダムに表示する。実際に引いた番号は最後にだけ見せる。
+    function shuffleNumbers(pickedNumber) {
+        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+        if (reducedMotion.matches) return true;
+
+        const preview = byId("draw-preview");
+        const previewLetter = byId("preview-letter");
+        const previewNumber = byId("preview-number");
+        const previewNumbers = createNumberPool().filter(number => number !== pickedNumber);
+        preview.hidden = false;
+        byId("draw-label").textContent = "抽選中";
+
+        return new Promise(resolve => {
+            const finishAt = performance.now() + ROLL_STEPS * ROLL_STEP_MS;
+            let timer;
+            function finish(completed) {
+                clearTimeout(timer);
+                cancelShuffle = null;
+                resolve(completed);
+            }
+            function tick() {
+                const msLeft = finishAt - performance.now();
+                if (msLeft <= 0 || reducedMotion.matches || previewNumbers.length === 0) {
+                    finish(true);
+                    return;
+                }
+                const index = Math.floor(Math.random() * previewNumbers.length);
+                const [number] = previewNumbers.splice(index, 1);
+                previewLetter.textContent = letter(number);
+                previewNumber.textContent = number;
+                timer = setTimeout(tick, Math.min(ROLL_STEP_MS, msLeft));
+            }
+            cancelShuffle = () => finish(false);
+            tick();
+        });
     }
 
     // 同じ内容ならリストを作り直さない。カードの通知が続いてもリンクのキーボードフォーカスが残る。
@@ -84,18 +125,31 @@
         if (newGame || last.winners !== winners) {
             const names = new Map();
             for (const card of game.participants) {
-                names.set(card.displayName, (names.get(card.displayName) || 0) + 1);
+                const name = card.displayName || card.cardId;
+                names.set(name, (names.get(name) || 0) + 1);
             }
-            const items = game.winners.map(group => {
+            // 保存順は初ビンゴの回順。画面では最新回を先頭にし、同着の全員を同じ大きさで見せる。
+            let announcement = "";
+            const items = game.winners.slice().reverse().map((group, index) => {
                 const item = document.createElement("li");
                 item.append(element("span", `第${group.firstBingoAt}回`, "badge"));
                 if (group.cards.length > 1) item.append(element("span", `${group.cards.length}人同着`, "host-caption"));
-                const labels = group.cards.map(card => names.get(card.displayName) > 1 && card.displayName !== card.cardId
-                    ? `${card.displayName}（${card.cardId}）` : card.displayName);
-                item.append(element("strong", labels.join(" ・ ")));
+                const labels = group.cards.map(card => {
+                    const name = card.displayName || card.cardId;
+                    return names.get(name) > 1 && name !== card.cardId ? `${name}（${card.cardId}）` : name;
+                });
+                const list = element("div", "", "winner-names");
+                for (const label of labels) list.append(element("strong", label, "winner-name"));
+                item.append(list);
+                if (index === 0) {
+                    item.className = "latest-winners";
+                    announcement = `第${group.firstBingoAt}回でビンゴ。 ${labels.join("、")}`;
+                }
                 return item;
             });
-            byId("result-winners").replaceChildren(...items.map(item => item.cloneNode(true)));
+            setText("#winner-announcement", announcement);
+            // 終了後の成績表は、最初に当選した回から順に振り返れるようにする。
+            byId("result-winners").replaceChildren(...items.map(item => item.cloneNode(true)).reverse());
             byId("winner-list").replaceChildren(...items);
             byId("winners-empty").hidden = byId("result-empty").hidden = items.length > 0;
         }
@@ -274,7 +328,18 @@
         const id = event.currentTarget.id;
         if (busy || !displayed || !STORE.hasHost() || event.detail > 1 || byId(id).disabled) return;
         const expected = displayed;
+        const leaseAtClick = releaseHost;
+        function readExpectedGame() {
+            const game = STORE.readGame();
+            if (releaseHost !== leaseAtClick || !STORE.hasHost() || !game
+                || game.gameId !== expected.gameId || game.history.length !== expected.round) {
+                throw new Error("ゲームまたは操作権が変わりました。現在の状態を確認してください。");
+            }
+            return game;
+        }
         let popup;
+        let beforeDraw;
+        let draw;
         busy = true;
         notice = "";
         disableCommands();
@@ -284,11 +349,16 @@
                 popup = window.open("about:blank", "_blank");
                 if (popup) popup.opener = null;
             }
+            if (id === "draw-next") {
+                // 1球だけ仮決定する。演出中は鍵を持たず、プールも履歴も書き換えない。
+                beforeDraw = readExpectedGame();
+                if (beforeDraw.phase !== "playing" || countChecks(beforeDraw).pending || !beforeDraw.numbers.length) return;
+                draw = drawOne(beforeDraw.numbers, beforeDraw.history);
+                const completed = await shuffleNumbers(draw.pickedNumber);
+                if (!completed) return;
+            }
             await STORE.withWrite(() => {
-                const game = STORE.readGame();
-                if (!STORE.hasHost() || !game || game.gameId !== expected.gameId || game.history.length !== expected.round) {
-                    throw new Error("ゲームまたは操作権が変わりました。現在の状態を確認してください。");
-                }
+                const game = readExpectedGame();
                 if (id === "issue-card" && game.phase === "prepare") {
                     const cardId = STORE.issueCard(game);
                     if (popup && !popup.closed) popup.location.replace(STORE.cardUrl(game.gameId, cardId));
@@ -308,7 +378,11 @@
                 } else if (id === "draw-next" && game.phase === "playing") {
                     reconcile(game);
                     if (countChecks(game).pending || !game.numbers.length) return;
-                    const draw = drawOne(game.numbers, game.history);
+                    // 鍵を取って再確認する。同じプール・履歴なら、仮決定した1球をここで初めて共有する。
+                    if (JSON.stringify(game.numbers) !== JSON.stringify(beforeDraw.numbers)
+                        || JSON.stringify(game.history) !== JSON.stringify(beforeDraw.history)) {
+                        throw new Error("抽選の途中で保存内容が変わりました。現在の番号を確認してください。");
+                    }
                     game.numbers = draw.nextNumbers;
                     game.history = draw.nextHistory;
                     game.checks = [];
@@ -326,6 +400,10 @@
             notice = error.message;
         } finally {
             busy = false;
+            if (id === "draw-next") {
+                byId("draw-preview").hidden = true;
+                byId("draw-label").textContent = "最新の番号";
+            }
             try { render(STORE.readGame()); }
             catch (error) { showFailure(error); }
             scheduleRefresh();
@@ -350,6 +428,7 @@
     }
     window.addEventListener("pageshow", connect);
     window.addEventListener("pagehide", () => {
+        cancelShuffle?.();
         releaseHost?.();
         releaseHost = null;
         clearTimeout(deadlineTimer);
